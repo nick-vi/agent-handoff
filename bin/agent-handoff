@@ -1,0 +1,31 @@
+#!/usr/bin/env sh
+# agent-handoff launcher — prefers Bun (~22ms cold start), falls back to
+# the prebuilt Node bundle (~65ms). Lets users without Bun installed
+# still run the CLI.
+
+set -e
+
+SELF="$0"
+# Resolve symlinks so the relative paths below work whether the user
+# invoked us via $PATH symlink, agent-skill symlink, or absolute path.
+while [ -L "$SELF" ]; do
+  LINK=$(readlink "$SELF")
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *)  SELF="$(dirname "$SELF")/$LINK" ;;
+  esac
+done
+DIR=$(cd "$(dirname "$SELF")" && pwd)
+
+if command -v bun >/dev/null 2>&1; then
+  exec bun "$DIR/agent-handoff.ts" "$@"
+fi
+
+BUNDLE="$DIR/../runtime/cli.js"
+if [ -f "$BUNDLE" ]; then
+  exec node "$BUNDLE" "$@"
+fi
+
+echo "agent-handoff: neither 'bun' on PATH nor prebuilt Node bundle at $BUNDLE" >&2
+echo "  install Bun (https://bun.sh) or run \`bun scripts/build-node.ts\` in the skill repo" >&2
+exit 127

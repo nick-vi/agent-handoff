@@ -1,0 +1,185 @@
+:root {
+  color-scheme: light;
+  --bg: oklch(0.982 0.006 90);
+  --pane: oklch(0.996 0.004 90);
+  --pane-soft: oklch(0.965 0.008 90);
+  --text: oklch(0.205 0.018 260);
+  --muted: oklch(0.525 0.018 260);
+  --faint: oklch(0.675 0.014 260);
+  --rule: oklch(0.885 0.012 90);
+  --rule-strong: oklch(0.78 0.018 90);
+  --accent: oklch(0.48 0.105 245);
+  --accent-soft: oklch(0.92 0.035 245);
+  --ok: oklch(0.52 0.11 145);
+  --advisory: oklch(0.58 0.105 80);
+  --blocked: oklch(0.52 0.13 28);
+  --error: oklch(0.42 0.12 25);
+  --claude: oklch(0.61 0.115 55);
+  --codex: oklch(0.53 0.09 220);
+  --cursor: oklch(0.48 0.02 260);
+  --row: 28px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+mark {
+  padding: 0 2px;
+  border-radius: 2px;
+  color: var(--text);
+  background: oklch(0.88 0.07 92);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.dim {
+  color: var(--muted);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(280px, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--pane);
+}
+
+.workspace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workspace-select {
+  min-width: 0;
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0 28px 0 9px;
+  color: var(--text);
+  background: var(--pane);
+  outline: none;
+}
+
+.workspace-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.workspace strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.overline {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.text-button {
+  min-height: 26px;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  background: transparent;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.text-button {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  color: var(--muted);
+  background: var(--pane);
+}
+
+.search input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0 10px;
+  color: var(--text);
+  background: var(--pane);
+  outline: none;
+}
+
+.search input:focus-visible,
+button:focus-visible,
+.topic-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}

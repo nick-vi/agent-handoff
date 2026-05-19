@@ -1,0 +1,31 @@
+@media (max-width: 1020px) {
+  .topbar {
+    grid-template-columns: 1fr;
+    height: auto;
+    padding: 8px;
+  }
+
+  .app-shell {
+    grid-template-rows: auto auto 1fr;
+  }
+
+  .panes {
+    display: block;
+    overflow: auto;
+  }
+
+  .pane {
+    min-height: 320px;
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .pane-center {
+    height: 620px;
+  }
+
+  .pane-right {
+    height: 520px;
+  }
+}

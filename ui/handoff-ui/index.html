@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>agent-handoff inspector</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23111111'/%3E%3Cpath d='M4 5h8M4 8h8M4 11h5' stroke='%23f2f2f2' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./vendor/highlight-github.min.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="topbar">
+        <div class="workspace">
+          <label class="visually-hidden" for="workspace-select">Project</label>
+          <select id="workspace-select" class="workspace-select" aria-label="Project"></select>
+          <span id="workspace-hash" class="mono dim"></span>
+        </div>
+        <label class="search">
+          <span class="visually-hidden">Search topics</span>
+          <input id="search" type="search" placeholder="Search topics and sends" />
+        </label>
+        <div class="live-state" aria-live="polite">
+          <span class="live-dot"></span>
+          <span id="live-label">live</span>
+        </div>
+      </header>
+
+      <main class="panes">
+        <aside class="pane pane-left" aria-label="Topics">
+          <div class="pane-title">
+            <span>Topics</span>
+            <span id="topic-count" class="mono dim"></span>
+          </div>
+          <div id="topics" class="topic-list" aria-label="Handoff topics"></div>
+        </aside>
+
+        <section class="pane pane-center" aria-label="Transcript">
+          <div id="topic-header" class="topic-header"></div>
+          <div id="timeline" class="timeline" aria-label="Transcript"></div>
+        </section>
+
+        <aside class="pane pane-right" aria-label="Handoff sends">
+          <div class="inspector-head">
+            <div>
+              <h2 id="inspector-title">Sends</h2>
+            </div>
+          </div>
+          <div id="inspector" class="inspector-body"></div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="./vendor/marked.umd.js"></script>
+    <script src="./vendor/highlight.min.js"></script>
+    <script src="./dom-utils.js"></script>
+    <script src="./interactions.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

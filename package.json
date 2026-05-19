@@ -1,0 +1,29 @@
+{
+  "name": "agent-handoff",
+  "version": "0.1.0",
+  "description": "Hand work between CLI agents (cursor, codex, claude) with topic-pinned session continuity.",
+  "type": "module",
+  "bin": {
+    "handoff": "./bin/agent-handoff"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "handoff": "bun bin/agent-handoff.ts",
+    "build": "bun scripts/build-node.ts",
+    "runtime:check": "bun scripts/check-runtime.ts",
+    "release:check": "bun run typecheck && bun test && bun run test:node && bun run runtime:check",
+    "test": "bun test",
+    "test:node": "bun scripts/build-node.ts && node runtime/cli.js help >/dev/null && node runtime/cli.js status >/dev/null && node runtime/cli.js alias --suggest >/dev/null && echo 'node smoke ok'",
+    "typecheck": "bun tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@highlightjs/cdn-assets": "^11.11.1",
+    "marked": "^18.0.4"
+  }
+}

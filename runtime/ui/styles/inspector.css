@@ -1,0 +1,199 @@
+.inspector-head {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.inspector-head h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.inspector-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.handoff-send-list {
+  display: grid;
+  gap: 8px;
+}
+
+.handoff-send {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: var(--pane);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.handoff-send:hover {
+  background: var(--pane-soft);
+}
+
+.handoff-send.is-selected {
+  border-color: color-mix(in oklch, var(--accent) 48%, var(--rule));
+  background: color-mix(in oklch, var(--accent) 6%, var(--pane));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.handoff-send-head,
+.handoff-send-foot {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: var(--muted);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.handoff-send-head strong {
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.handoff-send-preview {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.command-line {
+  margin-bottom: 10px;
+  padding: 7px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--pane-soft);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin-bottom: 12px;
+}
+
+.kv dt {
+  color: var(--muted);
+}
+
+.kv dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.shortcut-grid dt {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.shortcut-grid dd {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--muted);
+}
+
+.notice {
+  border: 1px solid color-mix(in oklch, var(--advisory) 38%, var(--rule));
+  border-radius: 3px;
+  padding: 8px;
+  margin: 10px 0;
+  color: var(--muted);
+  background: var(--pane-soft);
+}
+
+.notice strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.notice.error {
+  border-color: color-mix(in oklch, var(--error) 45%, var(--rule));
+}
+
+.inspector-body details {
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  margin-top: 8px;
+  background: var(--pane);
+}
+
+.inspector-body summary {
+  cursor: pointer;
+  padding: 8px;
+  color: var(--muted);
+  list-style: none;
+}
+
+.inspector-body summary::-webkit-details-marker {
+  display: none;
+}
+
+.inspector-body summary::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 8px;
+  margin-right: 7px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  transform: translateY(1px) rotate(0deg);
+  transform-origin: 45% 50%;
+}
+
+.inspector-body details[open] > summary::before {
+  transform: translateY(1px) rotate(90deg);
+}
+
+.inspector-body pre {
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border-top: 1px solid var(--rule);
+  background: var(--pane-soft);
+  white-space: pre-wrap;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tool-detail {
+  margin-top: 6px;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.is-running .swatch {
+  animation: pulse 1.6s ease-out infinite;
+}
