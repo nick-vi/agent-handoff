@@ -41,8 +41,7 @@ export type LocalSessionResolution =
 
 /**
  * Encode a workspace path the way claude does for its `projects/` dir.
- * `/Users/nick/.agents/skills/agent-handoff` →
- * `-Users-nick--agents-skills-agent-handoff` (`.` and `/` both → `-`).
+ * `/Users/me/code/project` -> `-Users-me-code-project`.
  */
 export function encodeClaudeWorkspace(workspaceRoot: string): string {
   return workspaceRoot.replace(/[/.]/g, '-');

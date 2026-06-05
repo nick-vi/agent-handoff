@@ -37,11 +37,12 @@ Semantic-ish: `MAJOR.MINOR.PATCH`.
 - **All modes available to all agents** — adapters declare all 5
   modes. `references/modes.md` shifted from yes/— gates to
   primary/viable recommendations + per-agent strengths heuristic.
-- **`--store-trace` flag** — opt-in forensic persistence of
-  prompt + full output per round, written to
+- **Durable result traces** — full prompt + output are now persisted
+  automatically per round, written to
   `traces/<topic>/<round>-<agent>.json` (0600). History.jsonl
-  stays slim (categorical metadata only); traces add depth on
-  demand. Replaces the previously deferred trace plan.
+  stays slim (categorical metadata only); `handoff result` retrieves
+  complete bodies when stdout is previewed/truncated. `--store-trace`
+  remains accepted as a compatibility no-op.
 - **`handoff tail <topic>`** — stream new history events as they're
   appended. Polling-based (500ms), portable. `--from-start` to
   print existing events too.
@@ -99,10 +100,13 @@ Surface:
 
 Tests: 32 cases across 9 files.
 
-Known gaps documented in SKILL.md:
+Known gaps at the 0.1.0 release:
 
 - Auto-fallback on agent-side session expiry not implemented; manual
   workaround via `handoff reset-session`
 - Cursor `--resume` not implemented; adapter is deliberately stateless
 - `--store-trace` for forensic prompt/response persistence not
   implemented; privacy default is summaries + verdicts only
+
+Some of these have since been addressed in `[Unreleased]`; this section
+describes the original 0.1.0 surface only.

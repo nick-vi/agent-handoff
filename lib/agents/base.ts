@@ -4,7 +4,7 @@
  *
  * The adapter owns:
  *   - CLI invocation shape (binary, flags, env)
- *   - Session resume support (codex: yes; cursor: no; claude: yes)
+ *   - Session resume support
  *   - Output parsing (extract verdict + new session id from stdout)
  *
  * The wrapper owns:
@@ -17,6 +17,7 @@
  */
 
 import type { AgentName, Mode, Verdict } from '../schema/v1.ts';
+import type { AgentInvocationDefaults } from '../model-defaults.ts';
 
 /**
  * Inputs to an agent invocation. The wrapper builds this struct from the
@@ -29,6 +30,8 @@ export type AgentRequest = {
   workspaceRoot: string;
   /** Full prompt text (brief + any caller framing). */
   prompt: string;
+  /** Handoff-owned per-invocation defaults for model / effort flags. */
+  defaults?: AgentInvocationDefaults;
   /**
    * Existing session ID to resume. Null means "new session". Adapters
    * for agents without resume support ignore this.
@@ -60,7 +63,7 @@ export type AgentRequest = {
  * is the merge's job.
  */
 export type AgentResponse = {
-  /** Raw stdout text from the agent (or summarized result for non-text agents). */
+  /** Text surfaced by the adapter as this round's user-visible result. */
   output: string;
   /** Session id intent — see type doc above. */
   sessionId: string | null | undefined;
@@ -72,7 +75,7 @@ export type AgentResponse = {
 
 export interface AgentAdapter {
   readonly name: AgentName;
-  /** True if the agent supports `--session-id`-style resume. */
+  /** True if the agent supports resumable sessions. */
   readonly supportsResume: boolean;
   /** Modes this adapter handles. Wrapper rejects unsupported mode/agent pairs. */
   readonly supportedModes: readonly Mode[];
@@ -95,8 +98,7 @@ export function defaultVerdictFromExitCode(code: number | null): Verdict {
  * Empty / nearly-empty output from a zero-exit run is the silent-failure
  * shape we keep getting bitten by: e.g. claude hits a permission prompt
  * with no human at the TTY, sits, exits 0 with nothing written. Without
- * this guard the adapter defaults to `ok` and the caller never knows
- * the run was a no-op.
+ * this guard the round would look successful despite doing no useful work.
  *
  * Threshold: post-trim length below this counts as "no useful work".
  * Picked conservatively — even a one-line "no findings" review verdict

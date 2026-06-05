@@ -25,8 +25,8 @@ allocated under the topic's lock, so concurrent sends never collide.
 ## session
 
 An agent-side resumable thread. Codex stores threads server-side keyed
-by UUID; Claude stores sessions in its local transcripts; cursor has no
-durable session model and treats each invocation as fresh.
+by UUID; Claude stores sessions in local transcripts; Cursor exposes
+resumable chats keyed by `session_id`.
 
 The handoff tracks per-(topic, agent) session IDs in the snapshot. When
 you send to an existing topic with a supporting agent, the handoff passes

@@ -224,7 +224,7 @@ var claude = {
   supportsResume: true,
   supportedModes: SUPPORTED_MODES,
   async invoke(req) {
-    const args = buildClaudeArgs(req.sessionId, req.prompt);
+    const args = buildClaudeArgs(req.sessionId, req.prompt, req.defaults);
     const t0 = Date.now();
     const result = await spawnClaude(args, req.workspaceRoot, req.onSpawn, req.env);
     const durationMs = Date.now() - t0;
@@ -252,8 +252,19 @@ ${body}` : body;
     };
   }
 };
-function buildClaudeArgs(sessionId, prompt) {
+function buildClaudeArgs(sessionId, prompt, defaults = {}) {
   const args = ["--print", "--dangerously-skip-permissions", "--output-format", "json"];
+  if (defaults.model) {
+    args.push("--model", defaults.model);
+  }
+  if (defaults.effort) {
+    args.push("--effort", defaults.effort);
+  }
+  if (defaults.speed === "fast") {
+    args.push("--settings", JSON.stringify({ fastMode: true }));
+  } else if (defaults.speed === "default") {
+    args.push("--settings", JSON.stringify({ fastMode: false }));
+  }
   if (sessionId) {
     args.push("--resume", sessionId);
   }
@@ -304,7 +315,7 @@ var codex = {
   supportsResume: true,
   supportedModes: SUPPORTED_MODES2,
   async invoke(req) {
-    const args = buildCodexArgs(req.sessionId, req.prompt);
+    const args = buildCodexArgs(req.sessionId, req.prompt, req.defaults);
     const t0 = Date.now();
     const result = await spawnCodex(args, req.workspaceRoot, req.onSpawn, req.env);
     const durationMs = Date.now() - t0;
@@ -318,14 +329,29 @@ ${result.stderr}`);
     };
   }
 };
-function buildCodexArgs(sessionId, prompt) {
+function buildCodexArgs(sessionId, prompt, defaults = {}) {
   const args = ["exec"];
   if (sessionId) {
     args.push("resume", sessionId);
   }
+  if (defaults.model) {
+    args.push("--model", defaults.model);
+  }
+  if (defaults.effort) {
+    args.push("-c", `model_reasoning_effort=${tomlString(defaults.effort)}`);
+  }
+  if (defaults.speed === "fast") {
+    args.push("-c", "features.fast_mode=true");
+    args.push("-c", `service_tier=${tomlString("fast")}`);
+  } else if (defaults.speed === "default") {
+    args.push("-c", `service_tier=${tomlString("default")}`);
+  }
   args.push("--full-auto");
   args.push(prompt);
   return args;
+}
+function tomlString(value) {
+  return JSON.stringify(value);
 }
 function spawnCodex(args, cwd, onSpawn, env = process.env) {
   return new Promise((resolve, reject) => {
@@ -367,13 +393,13 @@ var SUPPORTED_MODES3 = [
   "review",
   "debug"
 ];
-var MODEL_DEFAULT = "composer-2-fast";
+var CURSOR_BUILTIN_MODEL_DEFAULT = "composer-2.5-fast";
 var cursor = {
   name: "cursor",
   supportsResume: true,
   supportedModes: SUPPORTED_MODES3,
   async invoke(req) {
-    const args = buildArgs(req.mode, req.workspaceRoot, req.prompt, req.sessionId);
+    const args = buildArgs(req.mode, req.workspaceRoot, req.prompt, req.sessionId, req.defaults ?? {});
     const t0 = Date.now();
     const result = await spawnCursor(args, req.workspaceRoot, req.onSpawn, req.env);
     const durationMs = Date.now() - t0;
@@ -386,9 +412,9 @@ var cursor = {
     };
   }
 };
-function buildArgs(mode, workspace, prompt, sessionId) {
+function buildArgs(mode, workspace, prompt, sessionId, defaults) {
   const args = ["--print", "--output-format", "json", "--trust", "--workspace", workspace];
-  args.push("--model", MODEL_DEFAULT);
+  args.push("--model", defaults.model ?? CURSOR_BUILTIN_MODEL_DEFAULT);
   args.push("--yolo");
   if (sessionId)
     args.push("--resume", sessionId);
@@ -1454,6 +1480,9 @@ function toolArgsText(value) {
   }
 }
 
+// lib/agents/cursor.ts
+var CURSOR_BUILTIN_MODEL_DEFAULT2 = "composer-2.5-fast";
+
 // lib/local-sessions.ts
 import { existsSync as existsSync9, readdirSync as readdirSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
@@ -1731,6 +1760,7 @@ function validateTopic2(slug) {
 }
 
 // lib/trace.ts
+import { readdirSync as readdirSync5 } from "node:fs";
 import { join as join10 } from "node:path";
 var TRACES_DIRNAME = "traces";
 function tracesDir(ws) {
@@ -1746,6 +1776,29 @@ function tracePath(ws, topic, round, agent) {
 function writeTrace(ws, trace) {
   const file = new AtomicFile(tracePath(ws, trace.topic, trace.round, trace.agent));
   file.writeJson(trace, 2);
+}
+function readTraces(ws, topic) {
+  const dir = topicTracesDir(ws, topic);
+  let entries;
+  try {
+    entries = readdirSync5(dir);
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const name of entries) {
+    if (!name.endsWith(".json"))
+      continue;
+    const file = new AtomicFile(join10(dir, name));
+    const raw = file.readJson();
+    if (raw && raw.schema_version === 1)
+      out.push(raw);
+  }
+  out.sort((a, b) => a.round - b.round);
+  return out;
+}
+function traceFilePath(ws, topic, round, agent) {
+  return tracePath(ws, topic, round, agent);
 }
 
 // lib/duration.ts
@@ -1770,7 +1823,7 @@ function parseSince(spec) {
 
 // lib/plan.ts
 import { createHash } from "node:crypto";
-import { existsSync as existsSync11, readdirSync as readdirSync5, readFileSync as readFileSync7, statSync as statSync4 } from "node:fs";
+import { existsSync as existsSync11, readdirSync as readdirSync6, readFileSync as readFileSync7, statSync as statSync4 } from "node:fs";
 import { join as join11 } from "node:path";
 var PLANS_DIRNAME = "plans";
 function plansDir(ws) {
@@ -1817,7 +1870,7 @@ function listPlanHistoryRounds(ws, topic) {
   if (!existsSync11(dir))
     return [];
   const rounds = [];
-  for (const name of readdirSync5(dir)) {
+  for (const name of readdirSync6(dir)) {
     if (!name.endsWith(".md"))
       continue;
     const rawRound = name.slice(0, -".md".length);
@@ -1941,11 +1994,204 @@ function sanitizeBasename(raw) {
   return cleaned || "workspace";
 }
 
+// lib/model-defaults.ts
+import { join as join13 } from "node:path";
+var EMPTY_DEFAULTS = {
+  schema_version: 1,
+  agents: {}
+};
+var MODEL_ENV = {
+  claude: "AGENT_HANDOFF_CLAUDE_MODEL",
+  codex: "AGENT_HANDOFF_CODEX_MODEL",
+  cursor: "AGENT_HANDOFF_CURSOR_MODEL"
+};
+var EFFORT_ENV = {
+  claude: "AGENT_HANDOFF_CLAUDE_EFFORT",
+  codex: "AGENT_HANDOFF_CODEX_REASONING_EFFORT",
+  cursor: "AGENT_HANDOFF_CURSOR_EFFORT"
+};
+var SPEED_ENV = {
+  claude: "AGENT_HANDOFF_CLAUDE_SPEED",
+  codex: "AGENT_HANDOFF_CODEX_SPEED",
+  cursor: "AGENT_HANDOFF_CURSOR_SPEED"
+};
+function agentDefaultsPath() {
+  return join13(resolveStateDir(), "agent-defaults.json");
+}
+function readAgentDefaultsFile() {
+  const raw = new AtomicFile(agentDefaultsPath()).readJson();
+  if (raw === null)
+    return EMPTY_DEFAULTS;
+  if (!isDefaultsFile(raw)) {
+    throw new Error(`Invalid agent defaults file: ${agentDefaultsPath()}`);
+  }
+  return raw;
+}
+function getStoredAgentDefaults(agent) {
+  const file = readAgentDefaultsFile();
+  const entry = file.agents[agent] ?? {};
+  const out = {};
+  if (entry.model)
+    out.model = entry.model;
+  if (agent === "cursor")
+    return out;
+  if (entry.effort)
+    out.effort = entry.effort;
+  if (entry.speed)
+    out.speed = entry.speed;
+  return out;
+}
+function resolveAgentDefaults(agent, env = process.env) {
+  const stored = getStoredAgentDefaults(agent);
+  const modelEnv = cleanValue(env[MODEL_ENV[agent]]);
+  const effortEnv = agent === "cursor" ? null : cleanValue(env[EFFORT_ENV[agent]]);
+  const speedEnv = agent === "cursor" ? null : normalizeSpeedValue(cleanValue(env[SPEED_ENV[agent]]));
+  const legacyCodexEffortEnv = agent === "codex" ? cleanValue(env.AGENT_HANDOFF_CODEX_EFFORT) : null;
+  const model = modelEnv ?? stored.model;
+  const effort = effortEnv ?? legacyCodexEffortEnv ?? stored.effort;
+  const speed = speedEnv ?? stored.speed;
+  const out = {
+    modelSource: modelEnv ? "env" : stored.model ? "state" : "unset",
+    effortSource: effortEnv || legacyCodexEffortEnv ? "env" : stored.effort ? "state" : "unset",
+    speedSource: speedEnv ? "env" : stored.speed ? "state" : "unset"
+  };
+  if (model)
+    out.model = model;
+  if (effort)
+    out.effort = effort;
+  if (speed)
+    out.speed = speed;
+  return out;
+}
+function setAgentDefaults(agent, patch) {
+  if (agent === "cursor" && patch.effort !== undefined) {
+    throw new Error("Cursor Agent CLI does not expose a separate effort flag; set only model.");
+  }
+  if (agent === "cursor" && patch.speed !== undefined) {
+    throw new Error("Cursor Agent encodes speed in the model id; set only model.");
+  }
+  ensureStateDir();
+  const file = readAgentDefaultsFile();
+  const prev = file.agents[agent] ?? {};
+  const next = agent === "cursor" ? pickCursorSupportedDefaults(prev) : { ...prev };
+  if (patch.model !== undefined)
+    next.model = normalizeValue("model", patch.model);
+  if (patch.effort !== undefined)
+    next.effort = normalizeValue("effort", patch.effort);
+  if (patch.speed !== undefined) {
+    const speed = normalizeSpeedValue(normalizeValue("speed", patch.speed));
+    if (speed)
+      next.speed = speed;
+  }
+  next.updated_at = new Date().toISOString();
+  const updated = {
+    schema_version: 1,
+    agents: { ...file.agents, [agent]: next }
+  };
+  new AtomicFile(agentDefaultsPath()).writeJson(updated, 2);
+  return updated;
+}
+function unsetAgentDefaults(agent, fields) {
+  ensureStateDir();
+  const file = readAgentDefaultsFile();
+  const prev = file.agents[agent] ?? {};
+  const next = { ...prev };
+  if (fields.model)
+    delete next.model;
+  if (fields.effort)
+    delete next.effort;
+  if (fields.speed)
+    delete next.speed;
+  next.updated_at = new Date().toISOString();
+  const updatedAgents = { ...file.agents };
+  if (!next.model && !next.effort && !next.speed) {
+    delete updatedAgents[agent];
+  } else {
+    updatedAgents[agent] = next;
+  }
+  const updated = {
+    schema_version: 1,
+    agents: updatedAgents
+  };
+  new AtomicFile(agentDefaultsPath()).writeJson(updated, 2);
+  return updated;
+}
+function envNamesForAgent(agent) {
+  if (agent === "cursor") {
+    return { model: MODEL_ENV[agent], effort: "unsupported", speed: "unsupported" };
+  }
+  return { model: MODEL_ENV[agent], effort: EFFORT_ENV[agent], speed: SPEED_ENV[agent] };
+}
+function cleanValue(value) {
+  if (value === undefined)
+    return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+function normalizeValue(field, value) {
+  const trimmed = value.trim();
+  if (!trimmed)
+    throw new Error(`${field} must be non-empty`);
+  if (/[\r\n]/.test(trimmed))
+    throw new Error(`${field} must be a single line`);
+  return trimmed;
+}
+function normalizeSpeedValue(value) {
+  if (value === null)
+    return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "fast")
+    return "fast";
+  if (normalized === "default" || normalized === "standard")
+    return "default";
+  throw new Error(`Unsupported speed "${value}". Supported: fast, default.`);
+}
+function isDefaultsFile(value) {
+  if (!value || typeof value !== "object")
+    return false;
+  const raw = value;
+  if (raw.schema_version !== 1)
+    return false;
+  if (!raw.agents || typeof raw.agents !== "object")
+    return false;
+  for (const [agent, defaults] of Object.entries(raw.agents)) {
+    if (agent !== "claude" && agent !== "codex" && agent !== "cursor")
+      return false;
+    if (!defaults || typeof defaults !== "object")
+      return false;
+    const d = defaults;
+    if (d.model !== undefined && typeof d.model !== "string")
+      return false;
+    if (d.effort !== undefined && typeof d.effort !== "string")
+      return false;
+    if (d.speed !== undefined) {
+      if (typeof d.speed !== "string")
+        return false;
+      if (!isPersistedSpeedDefault(d.speed))
+        return false;
+    }
+    if (d.updated_at !== undefined && typeof d.updated_at !== "string")
+      return false;
+  }
+  return true;
+}
+function isPersistedSpeedDefault(value) {
+  return value === "fast" || value === "default";
+}
+function pickCursorSupportedDefaults(defaults) {
+  const out = {};
+  if (defaults.model)
+    out.model = defaults.model;
+  if (defaults.updated_at)
+    out.updated_at = defaults.updated_at;
+  return out;
+}
+
 // lib/ui-server.ts
 import { spawnSync as spawnSync3 } from "node:child_process";
 import { existsSync as existsSync12, readFileSync as readFileSync8 } from "node:fs";
 import { createServer } from "node:http";
-import { extname, join as join13, resolve as resolve3 } from "node:path";
+import { extname, join as join14, resolve as resolve3 } from "node:path";
 
 // lib/runtime.ts
 import { dirname as dirname7, resolve as resolve2 } from "node:path";
@@ -1976,7 +2222,7 @@ async function startUiServer(options) {
   const includeTranscripts = options.includeTranscripts || !options.noTranscripts && loopbackHost;
   const repoRoot = runtimeRepoRoot(import.meta.url);
   const uiRoot = resolveUiRoot(repoRoot);
-  if (!existsSync12(join13(uiRoot, "index.html"))) {
+  if (!existsSync12(join14(uiRoot, "index.html"))) {
     console.error(`UI assets not found at ${uiRoot}`);
     return 1;
   }
@@ -2017,10 +2263,10 @@ async function startUiServer(options) {
   return 0;
 }
 function resolveUiRoot(repoRoot) {
-  const runtimeUi = join13(repoRoot, "runtime", "ui");
-  if (existsSync12(join13(runtimeUi, "index.html")))
+  const runtimeUi = join14(repoRoot, "runtime", "ui");
+  if (existsSync12(join14(runtimeUi, "index.html")))
     return runtimeUi;
-  return join13(repoRoot, "ui", "handoff-ui");
+  return join14(repoRoot, "ui", "handoff-ui");
 }
 function handleUiRequest(req, res, uiRoot, options) {
   const rawUrl = req.url ?? "/";
@@ -2088,15 +2334,15 @@ function contentType(path) {
 }
 
 // lib/ui-snapshot.ts
-import { readFileSync as readFileSync11, readdirSync as readdirSync10 } from "node:fs";
-import { join as join19 } from "node:path";
+import { readFileSync as readFileSync11, readdirSync as readdirSync11 } from "node:fs";
+import { join as join20 } from "node:path";
 
 // lib/pointer.ts
-import { dirname as dirname8, join as join14 } from "node:path";
+import { dirname as dirname8, join as join15 } from "node:path";
 var POINTER_DIR2 = ".handoff";
 var POINTER_FILE2 = "current.json";
 function pointerPath2(workspaceRoot) {
-  return join14(workspaceRoot, POINTER_DIR2, POINTER_FILE2);
+  return join15(workspaceRoot, POINTER_DIR2, POINTER_FILE2);
 }
 function readPointer2(ws) {
   const file = new AtomicFile(pointerPath2(ws.resolvedRoot));
@@ -2109,20 +2355,20 @@ function readPointer2(ws) {
 }
 
 // lib/running.ts
-import { existsSync as existsSync13, mkdirSync as mkdirSync8, readdirSync as readdirSync6, statSync as statSync5, unlinkSync as unlinkSync3 } from "node:fs";
-import { join as join15 } from "node:path";
+import { existsSync as existsSync13, mkdirSync as mkdirSync8, readdirSync as readdirSync7, statSync as statSync5, unlinkSync as unlinkSync3 } from "node:fs";
+import { join as join16 } from "node:path";
 function runningDir2(ws) {
-  return join15(ensureStateDir(), "running", ws.dirName);
+  return join16(ensureStateDir(), "running", ws.dirName);
 }
 function listRunning2(ws) {
   const dir = runningDir2(ws);
   if (!existsSync13(dir))
     return [];
   const out = [];
-  for (const name of readdirSync6(dir)) {
+  for (const name of readdirSync7(dir)) {
     if (!name.endsWith(".json"))
       continue;
-    const path = join15(dir, name);
+    const path = join16(dir, name);
     try {
       if (!statSync5(path).isFile())
         continue;
@@ -2159,16 +2405,16 @@ function isAlive2(pid) {
 }
 
 // lib/registry.ts
-import { existsSync as existsSync14, mkdirSync as mkdirSync9, readdirSync as readdirSync7, readFileSync as readFileSync9, renameSync as renameSync3, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname9, join as join16 } from "node:path";
+import { existsSync as existsSync14, mkdirSync as mkdirSync9, readdirSync as readdirSync8, readFileSync as readFileSync9, renameSync as renameSync3, rmSync as rmSync3, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname9, join as join17 } from "node:path";
 function workspaceDir2(ws) {
-  return join16(ensureStateDir(), "sessions", ws.dirName);
+  return join17(ensureStateDir(), "sessions", ws.dirName);
 }
 function snapshotPath2(ws, topic) {
-  return join16(workspaceDir2(ws), `${topic}.json`);
+  return join17(workspaceDir2(ws), `${topic}.json`);
 }
 function historyPath2(ws, topic) {
-  return join16(workspaceDir2(ws), `${topic}.history.jsonl`);
+  return join17(workspaceDir2(ws), `${topic}.history.jsonl`);
 }
 function loadSnapshot2(ws, topic) {
   validateTopic(topic);
@@ -2187,7 +2433,7 @@ function listTopics2(ws) {
   const dir = workspaceDir2(ws);
   if (!existsSync14(dir))
     return [];
-  const entries = readdirSync7(dir);
+  const entries = readdirSync8(dir);
   const topics = [];
   for (const name of entries) {
     if (!name.endsWith(".json"))
@@ -2226,20 +2472,20 @@ function listTopicSummaries2(ws) {
 }
 
 // lib/trace.ts
-import { readdirSync as readdirSync8 } from "node:fs";
-import { join as join17 } from "node:path";
+import { readdirSync as readdirSync9 } from "node:fs";
+import { join as join18 } from "node:path";
 var TRACES_DIRNAME2 = "traces";
 function tracesDir2(ws) {
-  return join17(ensureStateDir(), "sessions", ws.dirName, TRACES_DIRNAME2);
+  return join18(ensureStateDir(), "sessions", ws.dirName, TRACES_DIRNAME2);
 }
 function topicTracesDir2(ws, topic) {
-  return join17(tracesDir2(ws), topic);
+  return join18(tracesDir2(ws), topic);
 }
-function readTraces(ws, topic) {
+function readTraces2(ws, topic) {
   const dir = topicTracesDir2(ws, topic);
   let entries;
   try {
-    entries = readdirSync8(dir);
+    entries = readdirSync9(dir);
   } catch {
     return [];
   }
@@ -2247,7 +2493,7 @@ function readTraces(ws, topic) {
   for (const name of entries) {
     if (!name.endsWith(".json"))
       continue;
-    const file = new AtomicFile(join17(dir, name));
+    const file = new AtomicFile(join18(dir, name));
     const raw = file.readJson();
     if (raw && raw.schema_version === 1)
       out.push(raw);
@@ -2487,9 +2733,9 @@ function toolArgsText2(value) {
 }
 
 // lib/local-sessions.ts
-import { existsSync as existsSync16, readdirSync as readdirSync9 } from "node:fs";
+import { existsSync as existsSync16, readdirSync as readdirSync10 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 function encodeClaudeWorkspace2(workspaceRoot) {
   return workspaceRoot.replace(/[/.]/g, "-");
 }
@@ -2507,12 +2753,12 @@ function resolveLocalSession2(agent, sessionId, workspaceRoot) {
   }
 }
 function resolveCursor2(sessionId) {
-  const root = join18(homedir4(), ".cursor", "chats");
+  const root = join19(homedir4(), ".cursor", "chats");
   if (!existsSync16(root)) {
     return { kind: "missing", reason: "no ~/.cursor/chats directory" };
   }
-  for (const ws of readdirSync9(root)) {
-    const candidate = join18(root, ws, sessionId, "store.db");
+  for (const ws of readdirSync10(root)) {
+    const candidate = join19(root, ws, sessionId, "store.db");
     if (existsSync16(candidate))
       return { kind: "sqlite-cursor", path: candidate };
   }
@@ -2522,16 +2768,16 @@ function resolveCursor2(sessionId) {
   };
 }
 function resolveClaude2(sessionId, workspaceRoot) {
-  const root = join18(homedir4(), ".claude", "projects");
+  const root = join19(homedir4(), ".claude", "projects");
   if (!existsSync16(root)) {
     return { kind: "missing", reason: `no ~/.claude/projects directory` };
   }
   const encoded = encodeClaudeWorkspace2(workspaceRoot);
-  const candidate = join18(root, encoded, `${sessionId}.jsonl`);
+  const candidate = join19(root, encoded, `${sessionId}.jsonl`);
   if (existsSync16(candidate))
     return { kind: "file", path: candidate };
-  for (const dir of readdirSync9(root)) {
-    const path = join18(root, dir, `${sessionId}.jsonl`);
+  for (const dir of readdirSync10(root)) {
+    const path = join19(root, dir, `${sessionId}.jsonl`);
     if (existsSync16(path))
       return { kind: "file", path };
   }
@@ -2541,21 +2787,21 @@ function resolveClaude2(sessionId, workspaceRoot) {
   };
 }
 function resolveCodex2(sessionId) {
-  const root = join18(homedir4(), ".codex", "sessions");
+  const root = join19(homedir4(), ".codex", "sessions");
   if (!existsSync16(root)) {
     return { kind: "missing", reason: "no ~/.codex/sessions directory" };
   }
   const tail = `-${sessionId}.jsonl`;
-  const years = readdirSync9(root).filter((n) => /^\d{4}$/.test(n)).sort().reverse();
+  const years = readdirSync10(root).filter((n) => /^\d{4}$/.test(n)).sort().reverse();
   for (const y of years) {
-    const months = readdirSync9(join18(root, y)).filter((n) => /^\d{2}$/.test(n)).sort().reverse();
+    const months = readdirSync10(join19(root, y)).filter((n) => /^\d{2}$/.test(n)).sort().reverse();
     for (const m of months) {
-      const days = readdirSync9(join18(root, y, m)).filter((n) => /^\d{2}$/.test(n)).sort().reverse();
+      const days = readdirSync10(join19(root, y, m)).filter((n) => /^\d{2}$/.test(n)).sort().reverse();
       for (const d of days) {
-        const dir = join18(root, y, m, d);
-        for (const name of readdirSync9(dir)) {
+        const dir = join19(root, y, m, d);
+        for (const name of readdirSync10(dir)) {
           if (name.endsWith(tail))
-            return { kind: "file", path: join18(dir, name) };
+            return { kind: "file", path: join19(dir, name) };
         }
       }
     }
@@ -2724,7 +2970,7 @@ function buildUiSnapshot(workspace, options = {}) {
       const shouldResolveTranscripts = options.includeTranscripts !== false && (!options.allWorkspaces || options.includeTopicKey === currentTopicKey);
       const snapshot = loadSnapshot2(ws, summary.topic);
       const history = readHistory2(ws, summary.topic);
-      const traceByRound = new Map(readTraces(ws, summary.topic).map((trace) => [`${trace.round}:${trace.agent}`, trace]));
+      const traceByRound = new Map(readTraces2(ws, summary.topic).map((trace) => [`${trace.round}:${trace.agent}`, trace]));
       const rounds = [];
       for (const event of history) {
         if (event.kind !== "created" && event.kind !== "invocation")
@@ -2825,9 +3071,9 @@ function buildUiSnapshot(workspace, options = {}) {
   };
 }
 function listAllWorkspaceDirs() {
-  const sessionsRoot = join19(resolveStateDir(), "sessions");
+  const sessionsRoot = join20(resolveStateDir(), "sessions");
   try {
-    return readdirSync10(sessionsRoot).filter((n) => !n.startsWith("."));
+    return readdirSync11(sessionsRoot).filter((n) => !n.startsWith("."));
   } catch {
     return [];
   }
@@ -2848,10 +3094,10 @@ function listUiWorkspaces(current) {
   });
 }
 function workspaceFromStateDir(dirName) {
-  const dir = join19(resolveStateDir(), "sessions", dirName);
+  const dir = join20(resolveStateDir(), "sessions", dirName);
   let names;
   try {
-    names = readdirSync10(dir);
+    names = readdirSync11(dir);
   } catch {
     return null;
   }
@@ -2863,7 +3109,7 @@ function workspaceFromStateDir(dirName) {
     if (name.startsWith("."))
       continue;
     try {
-      const raw = JSON.parse(readFileSync11(join19(dir, name), "utf-8"));
+      const raw = JSON.parse(readFileSync11(join20(dir, name), "utf-8"));
       const ws = raw.workspace;
       if (!ws?.resolvedRoot || !ws.basename || !ws.hash)
         continue;
@@ -2892,7 +3138,7 @@ function workspaceSummary(ws) {
 }
 function handoffVersion() {
   try {
-    const pkg = JSON.parse(readFileSync11(join19(runtimeRepoRoot(import.meta.url), "package.json"), "utf-8"));
+    const pkg = JSON.parse(readFileSync11(join20(runtimeRepoRoot(import.meta.url), "package.json"), "utf-8"));
     return typeof pkg.version === "string" ? pkg.version : "unknown";
   } catch {
     return "unknown";
@@ -3107,17 +3353,17 @@ function toolArgsText4(value) {
 import {
   closeSync as closeSync2,
   openSync as openSync2,
-  readdirSync as readdirSync11,
+  readdirSync as readdirSync12,
   readSync,
   statSync as statSync6,
   unlinkSync as unlinkSync5,
   writeFileSync as writeFileSync7
 } from "fs";
-import { join as join21 } from "path";
+import { join as join22 } from "path";
 
 // lib/atomic-file.ts
 import { existsSync as existsSync17, mkdirSync as mkdirSync10, readFileSync as readFileSync12, renameSync as renameSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync6 } from "node:fs";
-import { dirname as dirname10, join as join20 } from "node:path";
+import { dirname as dirname10, join as join21 } from "node:path";
 
 class AtomicFile2 {
   path;
@@ -3175,7 +3421,7 @@ class AtomicFile2 {
     return this.path;
   }
   generateTempPath() {
-    return join20(dirname10(this.path), `.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
+    return join21(dirname10(this.path), `.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
   }
 }
 
@@ -3188,6 +3434,7 @@ var CONTEXT_WORKSPACE_DIR_VAR = "AGENT_HANDOFF_WORKSPACE_DIR";
 var CONTEXT_RUN_ID_VAR = "AGENT_HANDOFF_RUN_ID";
 var CONTEXT_PARENT_RUN_ID_VAR = "AGENT_HANDOFF_PARENT_RUN_ID";
 var CONTEXT_CALLER_AGENT_VAR = "AGENT_HANDOFF_CALLER_AGENT";
+var DEFAULT_OUTPUT_PREVIEW_CHARS = 12000;
 function mintNestToken() {
   return `r${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -3221,6 +3468,8 @@ async function main(argv) {
       return cmdList(rest);
     case "show":
       return cmdShow(rest);
+    case "result":
+      return cmdResult(rest);
     case "archive":
       return await cmdArchive(rest);
     case "prune":
@@ -3233,6 +3482,9 @@ async function main(argv) {
       return cmdStatus(rest);
     case "doctor":
       return cmdDoctor(rest);
+    case "model":
+    case "models":
+      return cmdModel(rest);
     case "alias":
       return cmdAlias(rest);
     case "reset-session":
@@ -3403,6 +3655,7 @@ async function cmdSend(argv) {
   }
   const wantResume = shouldResumeAgentSession(mode, boolFlag(args, "resume"));
   const sessionId = wantResume ? snapshot?.sessions[agent.name] ?? null : null;
+  const agentDefaults = resolveAgentDefaults(agent.name);
   const noPlan = boolFlag(args, "no-plan");
   const callerAgent = detectCallerAgent();
   const composed = noPlan ? { prompt, injection: null } : composePromptWithPlan(workspace, topicSlug, prompt);
@@ -3413,6 +3666,7 @@ async function cmdSend(argv) {
   const priorWorkspaceDir = process.env[CONTEXT_WORKSPACE_DIR_VAR];
   const priorRunId = process.env[CONTEXT_RUN_ID_VAR];
   const priorParentRunId = process.env[CONTEXT_PARENT_RUN_ID_VAR];
+  const priorCallerAgent = process.env[CONTEXT_CALLER_AGENT_VAR];
   process.env[NEST_DEPTH_VAR] = String(depth + 1);
   process.env[NEST_TOKEN_VAR] = mintNestToken();
   process.env[CONTEXT_TOPIC_VAR] = topicSlug;
@@ -3424,6 +3678,7 @@ async function cmdSend(argv) {
     process.env[CONTEXT_PARENT_RUN_ID_VAR] = priorRunId;
   else
     delete process.env[CONTEXT_PARENT_RUN_ID_VAR];
+  process.env[CONTEXT_CALLER_AGENT_VAR] = agent.name;
   const childEnv = buildChildEnv(boolFlag(args, "clean-env"));
   let livePid = null;
   const sigintForward = () => {
@@ -3444,6 +3699,7 @@ async function cmdSend(argv) {
       workspaceRoot: workspace.resolvedRoot,
       prompt: composed.prompt,
       sessionId,
+      defaults: agentDefaults,
       env: childEnv,
       onSpawn: (pid) => {
         livePid = pid;
@@ -3487,6 +3743,10 @@ async function cmdSend(argv) {
       delete process.env[CONTEXT_PARENT_RUN_ID_VAR];
     else
       process.env[CONTEXT_PARENT_RUN_ID_VAR] = priorParentRunId;
+    if (priorCallerAgent === undefined)
+      delete process.env[CONTEXT_CALLER_AGENT_VAR];
+    else
+      process.env[CONTEXT_CALLER_AGENT_VAR] = priorCallerAgent;
   }
   if (snapshot === null) {
     try {
@@ -3538,32 +3798,30 @@ async function cmdSend(argv) {
       durationMs: response.durationMs
     });
   }
-  if (boolFlag(args, "store-trace")) {
-    try {
-      const finalSnap = loadSnapshot(workspace, topicSlug);
-      const round = finalSnap?.round_count ?? 1;
-      writeTrace(workspace, {
-        schema_version: 1,
-        topic: topicSlug,
-        agent: agent.name,
-        mode,
-        round,
-        ts: new Date().toISOString(),
-        prompt,
-        output: response.output,
-        session_id: response.sessionId ?? null,
-        verdict: response.verdict,
-        duration_ms: response.durationMs
-      });
-    } catch (err) {
-      console.error(`[handoff] warn: failed to write trace: ${err instanceof Error ? err.message : String(err)}`);
-    }
+  const finalSnap = loadSnapshot(workspace, topicSlug);
+  const round = finalSnap?.round_count ?? 1;
+  let tracePathForRound = null;
+  try {
+    writeTrace(workspace, {
+      schema_version: 1,
+      topic: topicSlug,
+      agent: agent.name,
+      mode,
+      round,
+      ts: new Date().toISOString(),
+      prompt: composed.prompt,
+      output: response.output,
+      session_id: response.sessionId ?? null,
+      verdict: response.verdict,
+      duration_ms: response.durationMs
+    });
+    tracePathForRound = traceFilePath(workspace, topicSlug, round, agent.name);
+  } catch (err) {
+    console.error(`[handoff] warn: failed to write trace: ${err instanceof Error ? err.message : String(err)}`);
   }
   let planSnapshotPath = null;
   if (boolFlag(args, "snapshot-plan-on-edit") && !noPlan) {
     try {
-      const finalSnap = loadSnapshot(workspace, topicSlug);
-      const round = finalSnap?.round_count ?? 1;
       const result = snapshotPlanIfChanged(workspace, topicSlug, round);
       if (result.snapshotted)
         planSnapshotPath = result.path;
@@ -3571,15 +3829,14 @@ async function cmdSend(argv) {
       console.error(`[handoff] warn: failed to snapshot plan: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  process.stdout.write(response.output);
-  if (!response.output.endsWith(`
-`))
-    process.stdout.write(`
-`);
+  const resultCmd = `handoff result ${topicSlug} --round ${round} --agent ${agent.name} --part output`;
+  writeAgentOutput(response.output, { tracePath: tracePathForRound, resultCmd });
   const planFooter = composed.injection ? ` plan=injected(${composed.injection.sizeBytes}B,${composed.injection.ageString})` : noPlan ? " plan=skipped" : "";
   const snapFooter = planSnapshotPath ? " plan-snapshot=written" : "";
   const envFooter = boolFlag(args, "clean-env") ? " env=clean" : "";
-  console.log(`[handoff] topic=${topicSlug} agent=${agent.name} mode=${mode} ` + `session=${response.sessionId ?? "none"} ` + `verdict=${response.verdict} duration_ms=${response.durationMs} wall_ms=${wallMs}` + planFooter + snapFooter + envFooter);
+  const defaultsFooter = formatDefaultsFooter(agent.name, agentDefaults);
+  const traceFooter = tracePathForRound ? ` trace=${tracePathForRound}` : " trace=unavailable";
+  console.log(`[handoff] topic=${topicSlug} agent=${agent.name} mode=${mode} ` + `session=${response.sessionId ?? "none"} ` + `verdict=${response.verdict} duration_ms=${response.durationMs} wall_ms=${wallMs}` + defaultsFooter + traceFooter + planFooter + snapFooter + envFooter);
   if (response.verdict === "ok" || response.verdict === "advisory")
     return 0;
   if (response.verdict === "blocked")
@@ -3637,6 +3894,91 @@ function cmdShow(argv) {
   for (const event of readHistory(workspace, topic)) {
     console.log(JSON.stringify(event));
   }
+  return 0;
+}
+function cmdResult(argv) {
+  const args = parseFlags(argv, {
+    string: ["workspace", "round", "agent", "part"],
+    boolean: ["latest", "path", "json"],
+    _: "topic"
+  });
+  const topic = args.positional[0];
+  if (!topic) {
+    console.error("Usage: handoff result <topic> [--latest|--round N] [--agent <name>] " + "[--part output|prompt|both|metadata] [--path|--json]");
+    return 2;
+  }
+  try {
+    validateTopic2(topic);
+  } catch (err) {
+    if (err instanceof TopicSlugError2) {
+      console.error(err.message);
+      return 2;
+    }
+    throw err;
+  }
+  const agentRaw = strFlag(args, "agent");
+  let agent;
+  if (agentRaw !== undefined) {
+    const parsed = parseAgentArg(agentRaw);
+    if (!parsed)
+      return 2;
+    agent = parsed;
+  }
+  const roundRaw = strFlag(args, "round");
+  if (roundRaw && boolFlag(args, "latest")) {
+    console.error("Use either --latest or --round N, not both.");
+    return 2;
+  }
+  let round;
+  if (roundRaw) {
+    round = Number.parseInt(roundRaw, 10);
+    if (!Number.isFinite(round) || round < 1) {
+      console.error(`--round must be a positive integer (got "${roundRaw}")`);
+      return 2;
+    }
+  }
+  const part = strFlag(args, "part") ?? "output";
+  if (!["output", "prompt", "both", "metadata"].includes(part)) {
+    console.error(`--part must be output|prompt|both|metadata (got "${part}")`);
+    return 2;
+  }
+  const cwd = strFlag(args, "workspace") ?? process.cwd();
+  const workspace = resolveWorkspace(cwd);
+  const traces = readTraces(workspace, topic).filter((trace2) => agent ? trace2.agent === agent : true).filter((trace2) => round ? trace2.round === round : true);
+  if (traces.length === 0) {
+    const scope = [
+      round ? `round ${round}` : "latest round",
+      agent ? `agent ${agent}` : null
+    ].filter(Boolean).join(", ");
+    console.error(`No stored handoff result for topic "${topic}" (${scope}).`);
+    return 1;
+  }
+  const trace = traces[traces.length - 1];
+  if (boolFlag(args, "path")) {
+    console.log(traceFilePath(workspace, topic, trace.round, trace.agent));
+    return 0;
+  }
+  if (boolFlag(args, "json")) {
+    console.log(JSON.stringify(trace, null, 2));
+    return 0;
+  }
+  if (part === "metadata") {
+    const { prompt: _prompt, output: _output, ...metadata } = trace;
+    console.log(JSON.stringify(metadata, null, 2));
+    return 0;
+  }
+  if (part === "prompt") {
+    writeTextWithFinalNewline(trace.prompt);
+    return 0;
+  }
+  if (part === "both") {
+    console.log("--- prompt ---");
+    writeTextWithFinalNewline(trace.prompt);
+    console.log("--- output ---");
+    writeTextWithFinalNewline(trace.output);
+    return 0;
+  }
+  writeTextWithFinalNewline(trace.output);
   return 0;
 }
 async function cmdArchive(argv) {
@@ -3822,7 +4164,127 @@ function cmdDoctor(argv) {
   for (const [name, adapter] of Object.entries(AGENTS)) {
     console.log(`  ${name.padEnd(8)} resume=${adapter.supportsResume} modes=[${adapter.supportedModes.join(",")}]`);
   }
+  console.log("");
+  console.log("model defaults");
+  printModelDefaults();
   return 0;
+}
+function cmdModel(argv) {
+  const args = parseFlags(argv, {
+    string: ["model", "effort", "speed"],
+    boolean: ["path", "model-only", "effort-only", "speed-only"],
+    _: "action"
+  });
+  if (boolFlag(args, "path")) {
+    console.log(agentDefaultsPath());
+    return 0;
+  }
+  const action = args.positional[0] ?? "list";
+  if (action === "list") {
+    printModelDefaults();
+    console.log("");
+    console.log(`path: ${agentDefaultsPath()}`);
+    return 0;
+  }
+  if (action === "set") {
+    const agent = parseAgentArg(args.positional[1]);
+    if (!agent)
+      return 2;
+    const positionalModel = args.positional[2];
+    const model = strFlag(args, "model") ?? positionalModel;
+    const effort = strFlag(args, "effort");
+    let speed;
+    try {
+      speed = normalizeSpeed(strFlag(args, "speed"));
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 2;
+    }
+    if (!model && !effort && !speed) {
+      console.error("Usage: handoff model set <agent> <model> [--effort <level>] [--speed fast|default]");
+      console.error("       handoff model set <agent> --model <model> [--effort <level>] [--speed fast|default]");
+      return 2;
+    }
+    if (effort && agent === "cursor") {
+      console.error("Cursor Agent CLI does not expose a separate effort flag; set only --model.");
+      return 2;
+    }
+    if (speed && agent === "cursor") {
+      console.error("Cursor Agent encodes speed in the model id; set --model composer-2.5-fast instead.");
+      return 2;
+    }
+    const patch = {};
+    if (model)
+      patch.model = model;
+    if (effort)
+      patch.effort = effort;
+    if (speed)
+      patch.speed = speed;
+    try {
+      setAgentDefaults(agent, patch);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 2;
+    }
+    const resolved = resolveAgentDefaults(agent);
+    console.log(formatModelLine(agent, resolved));
+    console.log(`path: ${agentDefaultsPath()}`);
+    return 0;
+  }
+  if (action === "unset") {
+    const agent = parseAgentArg(args.positional[1]);
+    if (!agent)
+      return 2;
+    const unsetModel = boolFlag(args, "model-only");
+    const unsetEffort = boolFlag(args, "effort-only");
+    const unsetSpeed = boolFlag(args, "speed-only");
+    const fields = unsetModel || unsetEffort || unsetSpeed ? { model: unsetModel, effort: unsetEffort, speed: unsetSpeed } : { model: true, effort: true, speed: true };
+    unsetAgentDefaults(agent, fields);
+    console.log(formatModelLine(agent, resolveAgentDefaults(agent)));
+    console.log(`path: ${agentDefaultsPath()}`);
+    return 0;
+  }
+  console.error(`Usage:
+` + `  handoff model                         list defaults
+` + `  handoff model --path                  print backing JSON path
+` + `  handoff model set <agent> <model> [--effort <level>] [--speed fast|default]
+` + "  handoff model unset <agent> [--model-only|--effort-only|--speed-only]");
+  return 2;
+}
+function normalizeSpeed(raw) {
+  if (raw === undefined)
+    return;
+  const value = raw.trim().toLowerCase();
+  if (value === "fast")
+    return "fast";
+  if (value === "default" || value === "standard")
+    return "default";
+  throw new Error(`Unsupported speed "${raw}". Supported: fast, default.`);
+}
+function parseAgentArg(raw) {
+  if (raw === "claude" || raw === "codex" || raw === "cursor")
+    return raw;
+  console.error(raw ? `Unknown agent "${raw}". Supported: claude, codex, cursor.` : "Missing agent.");
+  return null;
+}
+function printModelDefaults() {
+  for (const agent of ["claude", "codex", "cursor"]) {
+    console.log(formatModelLine(agent, resolveAgentDefaults(agent)));
+  }
+}
+function formatModelLine(agent, resolved) {
+  const stored = getStoredAgentDefaults(agent);
+  const envNames = envNamesForAgent(agent);
+  const modelText = resolved.model ? `${resolved.model} (${resolved.modelSource})` : agent === "cursor" ? `${CURSOR_BUILTIN_MODEL_DEFAULT2} (built-in)` : "(agent CLI default)";
+  const effortText = resolved.effort ? `${resolved.effort} (${resolved.effortSource})` : agent === "cursor" ? "(unsupported)" : "(agent CLI default)";
+  const speedText = agent === "cursor" ? "(model id)" : resolved.speed ? `${resolved.speed} (${resolved.speedSource})` : "(agent CLI default)";
+  const storedText = stored.model || stored.effort || stored.speed ? ` stored=${[
+    stored.model ? `model:${stored.model}` : null,
+    stored.effort ? `effort:${stored.effort}` : null,
+    stored.speed ? `speed:${stored.speed}` : null
+  ].filter(Boolean).join(",")}` : "";
+  const envText = agent === "cursor" ? envNames.model : `${envNames.model}, ${envNames.effort}, ${envNames.speed}`;
+  return `  ${agent.padEnd(8)} model=${modelText.padEnd(32)} effort=${effortText}` + ` speed=${speedText}` + ` env=[${envText}]` + storedText;
 }
 function cmdAlias(argv) {
   const args = parseFlags(argv, {
@@ -3949,7 +4411,7 @@ async function cmdTail(argv) {
   }
   const cwd = strFlag(args, "workspace") ?? process.cwd();
   const workspace = resolveWorkspace(cwd);
-  const file = join21(workspaceDir(workspace), `${topic}.history.jsonl`);
+  const file = join22(workspaceDir(workspace), `${topic}.history.jsonl`);
   let offset = 0;
   if (boolFlag(args, "from-start")) {
     offset = 0;
@@ -4397,12 +4859,12 @@ function cmdLog(argv) {
   const allWorkspaces = boolFlag(args, "all-workspaces");
   const entries = [];
   const workspaceDirs = allWorkspaces ? listAllWorkspaceDirs() : [resolveWorkspace(cwd).dirName];
-  const sessionsRoot = join21(resolveStateDir2(), "sessions");
+  const sessionsRoot = join22(resolveStateDir2(), "sessions");
   for (const wsDirName of workspaceDirs) {
-    const dir = join21(sessionsRoot, wsDirName);
+    const dir = join22(sessionsRoot, wsDirName);
     let names;
     try {
-      names = readdirSync11(dir);
+      names = readdirSync12(dir);
     } catch {
       continue;
     }
@@ -4410,7 +4872,7 @@ function cmdLog(argv) {
       if (!name.endsWith(".history.jsonl"))
         continue;
       const topic = name.slice(0, -".history.jsonl".length);
-      const path = join21(dir, name);
+      const path = join22(dir, name);
       let raw;
       try {
         raw = readFileSync13(path, "utf-8");
@@ -4673,6 +5135,49 @@ function buildChildEnv(clean) {
   }
   return env;
 }
+function writeAgentOutput(output, opts) {
+  const limit = outputPreviewLimit();
+  if (!opts.tracePath || output.length <= limit) {
+    writeTextWithFinalNewline(output);
+    return;
+  }
+  console.log(`[handoff] full output stored: ${opts.tracePath}`);
+  console.log(`[handoff] retrieve: ${opts.resultCmd}`);
+  console.log(`[handoff] output preview: first ${limit} of ${output.length} chars`);
+  writeTextWithFinalNewline(output.slice(0, limit));
+  console.log("[handoff] stdout preview truncated; use the retrieve command above for complete output.");
+}
+function writeTextWithFinalNewline(text) {
+  process.stdout.write(text);
+  if (!text.endsWith(`
+`))
+    process.stdout.write(`
+`);
+}
+function outputPreviewLimit(env = process.env) {
+  const raw = env.AGENT_HANDOFF_OUTPUT_PREVIEW_CHARS;
+  if (!raw)
+    return DEFAULT_OUTPUT_PREVIEW_CHARS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1)
+    return DEFAULT_OUTPUT_PREVIEW_CHARS;
+  return parsed;
+}
+function formatDefaultsFooter(agent, defaults) {
+  const parts = [];
+  if (defaults.model) {
+    parts.push(`model=${defaults.model}(${defaults.modelSource})`);
+  } else if (agent === "cursor") {
+    parts.push(`model=${CURSOR_BUILTIN_MODEL_DEFAULT2}(built-in)`);
+  }
+  if (defaults.effort && agent !== "cursor") {
+    parts.push(`effort=${defaults.effort}(${defaults.effortSource})`);
+  }
+  if (defaults.speed && agent !== "cursor") {
+    parts.push(`speed=${defaults.speed}(${defaults.speedSource})`);
+  }
+  return parts.length > 0 ? ` ${parts.join(" ")}` : "";
+}
 function strFlag(p, key) {
   const v = p.flags[key];
   return typeof v === "string" ? v : undefined;
@@ -4777,12 +5282,15 @@ Usage:
   handoff send --agent <name> --mode <mode> [--topic <slug>|--current] [options]
   handoff list [--all|--stale] [--workspace <path>]
   handoff show <topic> [--workspace <path>]
+  handoff result <topic> [--latest|--round N] [--agent <name>] [--workspace <path>]
+                 [--part output|prompt|both|metadata] [--path|--json]
   handoff status [--workspace <path>]
   handoff use <topic> [--workspace <path>]
   handoff clear [--workspace <path>]
   handoff archive <topic> [--workspace <path>]
   handoff reset-session <topic> --agent <name> [--reason ...]
   handoff prune [--keep-count N] [--keep-days N] [--workspace <path>]
+  handoff model [set <agent> <model> [--effort <level>] [--speed fast|default] | unset <agent> | --path]
   handoff alias <resolved-path> <hash> | --list | --remove <path> | --suggest
   handoff doctor [--workspace <path>]
   handoff ui [--workspace <path>] [--all-workspaces]
@@ -4814,7 +5322,8 @@ Send options:
                                  when other active topics exist.
   --archive-and-new              Archive existing snapshot+history; create fresh.
   --allow-nested                 Override nested-call refusal.
-  --store-trace                  Persist full prompt+output as a trace file
+  --store-trace                  Compatibility no-op. Handoff now always
+                                 stores full prompt+output as a trace file
                                  under traces/<topic>/<round>-<agent>.json.
   --no-plan                      Skip auto-injection of the topic's plan.
   --snapshot-plan-on-edit        After send, snapshot plan to history if
@@ -4827,6 +5336,8 @@ Discovery:
   handoff use <topic>              Set the per-cwd default topic for --current.
   handoff status                   Show current pointer + active/stale topics.
   handoff list                     List active topics (use --all for all).
+  handoff result <topic>           Print a stored full prompt/output result.
+  handoff model                    View or set skill-owned model defaults.
   handoff doctor                   Print resolution diagnostic.
 
 Live monitoring:

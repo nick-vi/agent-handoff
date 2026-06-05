@@ -107,11 +107,21 @@ handoff help
 
 ## `bun: command not found`
 
-**Symptom:** `handoff` invokes but the bun shebang fails.
+**Symptom:** A direct invocation of `bin/agent-handoff.ts` or a symlink
+to that `.ts` file fails with `bun: command not found`.
 
-**Why:** Bun is the runtime; not pre-installed on macOS or most Linuxes.
+**Why:** The `.ts` entrypoint uses a Bun shebang. The canonical
+`bin/agent-handoff` launcher is a POSIX shell script that prefers Bun
+but falls back to `node runtime/cli.js`.
 
-**Fix:** Install bun: `curl -fsSL https://bun.sh/install | bash`. Then
+**Fix:** Point PATH at the launcher, not the `.ts` file:
+```bash
+ln -sf ~/.agents/skills/agent-handoff/bin/agent-handoff ~/.local/bin/handoff
+handoff help
+```
+
+If you want source-level development or Bun's faster startup, install
+Bun with `curl -fsSL https://bun.sh/install | bash`, then run
 `handoff doctor` to confirm presence.
 
 ## Agent binary missing (`codex`, `claude`, `cursor-agent`)
@@ -155,3 +165,25 @@ include the diff or relevant context, codex has nothing to review.
 
 **Fix:** Include the diff (or paths to inspect) in the prompt. Or
 switch to `--mode consult --resume` to carry prior session context.
+
+## A handoff response looks truncated
+
+**Symptom:** stdout shows only the beginning of a long agent response, or
+the calling agent reports that the handoff result was clipped.
+
+**Why:** handoff stores the full prompt and output for every completed
+round, but stdout is only a transport surface. Very large responses are
+previewed deliberately so the caller's context is not flooded.
+
+**Fix:** Use the retrieval command printed before the preview, or run:
+
+```bash
+handoff result <topic> --latest --agent <claude|codex|cursor>
+```
+
+Use `--part prompt` to inspect the exact prompt sent to the child agent,
+`--path` to print the JSON trace path, or `--json` for the whole trace
+envelope.
+
+The stdout preview threshold defaults to 12,000 characters. Override it
+for one process tree with `AGENT_HANDOFF_OUTPUT_PREVIEW_CHARS=<chars>`.

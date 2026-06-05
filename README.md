@@ -64,16 +64,45 @@ installer also links the command, or add the symlink above manually.
 
 ```bash
 # from any project root
-~/.agents/skills/agent-handoff/bin/agent-handoff.ts send \
+handoff status
+
+handoff send \
   --agent codex --mode review \
   --topic openfigi-plan \
+  --new-topic \
   --summary "OpenFIGI CUSIP→ticker reverse mapping" \
   --prompt-file plan.md
+
+# optional human shortcut for later terminal use
+handoff use openfigi-plan
 
 # read actual handoff state in a local browser UI
 handoff ui
 handoff ui --all-workspaces
 ```
+
+Every handoff should carry a self-contained brief: objective, scope,
+constraints, validation, and non-goals. The receiving agent should end
+with `Verdict: ok | advisory | blocked | error` so the registry can
+categorize the round.
+
+Useful daily commands:
+
+- `handoff status` / `handoff list` — discover existing topics before
+  creating a new one.
+- `handoff send --topic <slug> --new-topic ...` — start a fresh topic
+  when other active topics already exist.
+- `handoff send --topic <slug> --resume ...` — confirm a stale topic
+  resume, or force agent-side session resume for one-shot modes.
+- `handoff reset-session <topic> --agent <name> --reason expired` —
+  clear a dead agent session while preserving topic history.
+- `handoff plan <topic> --set-file plan.md` — attach temporary
+  execution scaffolding that is auto-injected into sends unless
+  `--no-plan` is passed.
+- `handoff result <topic> --latest --agent <name>` — retrieve the full
+  stored output for a completed round when stdout only showed a preview.
+- `handoff tail`, `handoff log`, `handoff watch`, `handoff history`,
+  and `handoff cancel` — inspect or control live and historical rounds.
 
 ## Docs
 
@@ -87,6 +116,11 @@ handoff ui --all-workspaces
 
 Runtime state lives in `${XDG_DATA_HOME:-~/.local/share}/agent-handoff/`,
 not in this repo. Override via `AGENT_HANDOFF_STATE_DIR=/some/path`.
+Every completed handoff stores the exact prompt sent to the child agent
+and the full output under
+`<state>/sessions/<workspace>/traces/<topic>/<round>-<agent>.json`.
+For large responses, stdout is a preview and prints a `handoff result`
+command before the preview so another agent can fetch the complete body.
 
 ## UI
 
@@ -96,7 +130,7 @@ backs it with actual handoff state:
 
 - topic snapshots and history JSONL
 - running invocation files
-- optional trace files
+- durable trace files with exact prompts and full outputs
 - native transcript resolvers for claude, codex, and cursor
 
 Use `handoff ui --port 0` to ask the OS for a free port, or
@@ -139,15 +173,15 @@ for new files.
 Before publishing, run:
 
 ```bash
-bun run build
-bun test
-bun run test:node
-bun run runtime:check
+bun run release:check
 ```
 
 `bun run build` regenerates the install-time runtime bundle and copies
 the static UI into `runtime/`, matching the packaging pattern used by
 OpenCanon.
+
+`bun run release:check` runs typecheck, Bun tests, Node fallback smoke
+tests, and the runtime asset guard.
 
 `bun run runtime:check` rebuilds the runtime and fails if `runtime/`
 differs from the committed assets. The GitHub CI workflow runs the same

@@ -6,10 +6,10 @@ CLI: [`codex`](https://github.com/openai/codex)
 
 ```bash
 # new session
-codex exec --full-auto "<prompt>"
+codex exec [--model <model>] [-c 'model_reasoning_effort="<effort>"'] --full-auto "<prompt>"
 
 # resume existing thread
-codex exec resume <uuid> --full-auto "<prompt>"
+codex exec resume <uuid> [--model <model>] [-c 'model_reasoning_effort="<effort>"'] --full-auto "<prompt>"
 ```
 
 The handoff always passes `--full-auto` because handoff invocations are
@@ -45,8 +45,20 @@ Last occurrence wins (later mentions reflect post-mutation state).
 
 ## Default model
 
-Whatever codex's CLI configuration picks. Override via codex's own
-config (`~/.codex/config.toml`).
+By default, whatever codex's CLI configuration picks. Handoff can pin a
+skill-owned per-invocation model and reasoning effort:
+
+```bash
+# Example pin; update as OpenAI model names change.
+handoff model set codex gpt-5.5 --effort xhigh --speed fast
+```
+
+This causes sends to pass `--model <model>` and
+`-c model_reasoning_effort="<effort>"` to `codex exec`. With
+`--speed fast`, handoff also passes
+`-c features.fast_mode=true -c service_tier="fast"`. Unset with
+`handoff model unset codex` to return to codex's own config
+(`~/.codex/config.toml`) or built-in default.
 
 ## Modes supported
 

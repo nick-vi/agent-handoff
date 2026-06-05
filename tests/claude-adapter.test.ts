@@ -56,6 +56,69 @@ describe('claude buildArgs', () => {
     const args = buildClaudeArgs(null, prompt);
     expect(args[args.length - 1]).toBe(prompt);
   });
+
+  it('passes configured model and effort before prompt', () => {
+    const args = buildClaudeArgs(null, 'p', { model: 'sonnet', effort: 'high' });
+    expect(args).toEqual([
+      '--print',
+      '--dangerously-skip-permissions',
+      '--output-format',
+      'json',
+      '--model',
+      'sonnet',
+      '--effort',
+      'high',
+      'p',
+    ]);
+  });
+
+  it('passes configured fast mode settings before prompt', () => {
+    const args = buildClaudeArgs(null, 'p', { model: 'opus', speed: 'fast' });
+    expect(args).toEqual([
+      '--print',
+      '--dangerously-skip-permissions',
+      '--output-format',
+      'json',
+      '--model',
+      'opus',
+      '--settings',
+      '{"fastMode":true}',
+      'p',
+    ]);
+  });
+
+  it('can force default speed by disabling fast mode for the session', () => {
+    const args = buildClaudeArgs(null, 'p', { speed: 'default' });
+    expect(args).toEqual([
+      '--print',
+      '--dangerously-skip-permissions',
+      '--output-format',
+      'json',
+      '--settings',
+      '{"fastMode":false}',
+      'p',
+    ]);
+  });
+
+  it('passes configured model and effort on resume', () => {
+    const args = buildClaudeArgs('019dd000-aaaa-7000-bbbb-cccccccccccc', 'p', {
+      model: 'opus',
+      effort: 'xhigh',
+    });
+    expect(args).toEqual([
+      '--print',
+      '--dangerously-skip-permissions',
+      '--output-format',
+      'json',
+      '--model',
+      'opus',
+      '--effort',
+      'xhigh',
+      '--resume',
+      '019dd000-aaaa-7000-bbbb-cccccccccccc',
+      'p',
+    ]);
+  });
 });
 
 describe('claude tryParseJsonResult', () => {

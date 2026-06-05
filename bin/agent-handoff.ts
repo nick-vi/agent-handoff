@@ -44,6 +44,7 @@ import {
 } from '../lib/lifecycle.ts';
 import { clearPointer, readPointer, setPointer } from '../lib/pointer.ts';
 import { readCursorChat, type CursorTurn } from '../lib/agents/cursor-sqlite.ts';
+import { CURSOR_BUILTIN_MODEL_DEFAULT } from '../lib/agents/cursor.ts';
 import { resolveLocalSession } from '../lib/local-sessions.ts';
 import {
   cancelRunning,
@@ -53,7 +54,7 @@ import {
 } from '../lib/running.ts';
 import { resolveStateDir } from '../lib/state-dir.ts';
 import { TopicSlugError, validateTopic } from '../lib/slug.ts';
-import { writeTrace } from '../lib/trace.ts';
+import { readTraces, traceFilePath, writeTrace } from '../lib/trace.ts';
 import { parseSince } from '../lib/duration.ts';
 import {
   composePromptWithPlan,
@@ -66,6 +67,14 @@ import {
   writePlan,
 } from '../lib/plan.ts';
 import { resolveWorkspace } from '../lib/workspace.ts';
+import {
+  agentDefaultsPath,
+  envNamesForAgent,
+  getStoredAgentDefaults,
+  resolveAgentDefaults,
+  setAgentDefaults,
+  unsetAgentDefaults,
+} from '../lib/model-defaults.ts';
 import { startUiServer } from '../lib/ui-server.ts';
 import { buildUiSnapshot, listAllWorkspaceDirs } from '../lib/ui-snapshot.ts';
 import {
@@ -97,6 +106,7 @@ const CONTEXT_WORKSPACE_DIR_VAR = 'AGENT_HANDOFF_WORKSPACE_DIR';
 const CONTEXT_RUN_ID_VAR = 'AGENT_HANDOFF_RUN_ID';
 const CONTEXT_PARENT_RUN_ID_VAR = 'AGENT_HANDOFF_PARENT_RUN_ID';
 const CONTEXT_CALLER_AGENT_VAR = 'AGENT_HANDOFF_CALLER_AGENT';
+const DEFAULT_OUTPUT_PREVIEW_CHARS = 12_000;
 
 /**
  * Per-run marker so the recursion guard can tell "actual nesting"
@@ -143,6 +153,8 @@ async function main(argv: string[]): Promise<number> {
       return cmdList(rest);
     case 'show':
       return cmdShow(rest);
+    case 'result':
+      return cmdResult(rest);
     case 'archive':
       return await cmdArchive(rest);
     case 'prune':
@@ -155,6 +167,9 @@ async function main(argv: string[]): Promise<number> {
       return cmdStatus(rest);
     case 'doctor':
       return cmdDoctor(rest);
+    case 'model':
+    case 'models':
+      return cmdModel(rest);
     case 'alias':
       return cmdAlias(rest);
     case 'reset-session':
@@ -399,6 +414,7 @@ async function cmdSend(argv: string[]): Promise<number> {
   // session ID pointer is gated.
   const wantResume = shouldResumeAgentSession(mode, boolFlag(args, 'resume'));
   const sessionId = wantResume ? (snapshot?.sessions[agent.name] ?? null) : null;
+  const agentDefaults = resolveAgentDefaults(agent.name);
 
   // Plan auto-injection. Wraps the user prompt with a provenance
   // header so the receiving agent can see what context it was
@@ -422,6 +438,7 @@ async function cmdSend(argv: string[]): Promise<number> {
   const priorWorkspaceDir = process.env[CONTEXT_WORKSPACE_DIR_VAR];
   const priorRunId = process.env[CONTEXT_RUN_ID_VAR];
   const priorParentRunId = process.env[CONTEXT_PARENT_RUN_ID_VAR];
+  const priorCallerAgent = process.env[CONTEXT_CALLER_AGENT_VAR];
   process.env[NEST_DEPTH_VAR] = String(depth + 1);
   process.env[NEST_TOKEN_VAR] = mintNestToken();
   process.env[CONTEXT_TOPIC_VAR] = topicSlug;
@@ -431,6 +448,7 @@ async function cmdSend(argv: string[]): Promise<number> {
   process.env[CONTEXT_RUN_ID_VAR] = runId;
   if (priorRunId) process.env[CONTEXT_PARENT_RUN_ID_VAR] = priorRunId;
   else delete process.env[CONTEXT_PARENT_RUN_ID_VAR];
+  process.env[CONTEXT_CALLER_AGENT_VAR] = agent.name;
   const childEnv = buildChildEnv(boolFlag(args, 'clean-env'));
 
   // SIGINT handler: forward to the live child if there is one. Without
@@ -459,6 +477,7 @@ async function cmdSend(argv: string[]): Promise<number> {
       workspaceRoot: workspace.resolvedRoot,
       prompt: composed.prompt,
       sessionId,
+      defaults: agentDefaults,
       env: childEnv,
       onSpawn: (pid) => {
         livePid = pid;
@@ -488,6 +507,8 @@ async function cmdSend(argv: string[]): Promise<number> {
     else process.env[CONTEXT_RUN_ID_VAR] = priorRunId;
     if (priorParentRunId === undefined) delete process.env[CONTEXT_PARENT_RUN_ID_VAR];
     else process.env[CONTEXT_PARENT_RUN_ID_VAR] = priorParentRunId;
+    if (priorCallerAgent === undefined) delete process.env[CONTEXT_CALLER_AGENT_VAR];
+    else process.env[CONTEXT_CALLER_AGENT_VAR] = priorCallerAgent;
   }
 
   // Persist outcome.
@@ -554,32 +575,30 @@ async function cmdSend(argv: string[]): Promise<number> {
     });
   }
 
-  // Optional forensic trace — writes prompt + full output to a
-  // per-round file under `traces/<topic>/`. Best-effort; logs a
-  // warning if it fails but does not fail the send (the round's
-  // categorical metadata is already persisted in history.jsonl).
-  if (boolFlag(args, 'store-trace')) {
-    try {
-      const finalSnap = loadSnapshot(workspace, topicSlug);
-      const round = finalSnap?.round_count ?? 1;
-      writeTrace(workspace, {
-        schema_version: 1,
-        topic: topicSlug,
-        agent: agent.name,
-        mode,
-        round,
-        ts: new Date().toISOString(),
-        prompt,
-        output: response.output,
-        session_id: response.sessionId ?? null,
-        verdict: response.verdict,
-        duration_ms: response.durationMs,
-      });
-    } catch (err) {
-      console.error(
-        `[handoff] warn: failed to write trace: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+  const finalSnap = loadSnapshot(workspace, topicSlug);
+  const round = finalSnap?.round_count ?? 1;
+
+  // Store the full result before deciding how much to echo to stdout.
+  let tracePathForRound: string | null = null;
+  try {
+    writeTrace(workspace, {
+      schema_version: 1,
+      topic: topicSlug,
+      agent: agent.name,
+      mode,
+      round,
+      ts: new Date().toISOString(),
+      prompt: composed.prompt,
+      output: response.output,
+      session_id: response.sessionId ?? null,
+      verdict: response.verdict,
+      duration_ms: response.durationMs,
+    });
+    tracePathForRound = traceFilePath(workspace, topicSlug, round, agent.name);
+  } catch (err) {
+    console.error(
+      `[handoff] warn: failed to write trace: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   // Optional plan snapshot — captures the plan as it was at this
@@ -590,8 +609,6 @@ async function cmdSend(argv: string[]): Promise<number> {
   let planSnapshotPath: string | null = null;
   if (boolFlag(args, 'snapshot-plan-on-edit') && !noPlan) {
     try {
-      const finalSnap = loadSnapshot(workspace, topicSlug);
-      const round = finalSnap?.round_count ?? 1;
       const result = snapshotPlanIfChanged(workspace, topicSlug, round);
       if (result.snapshotted) planSnapshotPath = result.path;
     } catch (err) {
@@ -602,8 +619,8 @@ async function cmdSend(argv: string[]): Promise<number> {
   }
 
   // Stdout: agent body + handoff footer.
-  process.stdout.write(response.output);
-  if (!response.output.endsWith('\n')) process.stdout.write('\n');
+  const resultCmd = `handoff result ${topicSlug} --round ${round} --agent ${agent.name} --part output`;
+  writeAgentOutput(response.output, { tracePath: tracePathForRound, resultCmd });
   const planFooter = composed.injection
     ? ` plan=injected(${composed.injection.sizeBytes}B,${composed.injection.ageString})`
     : noPlan
@@ -611,10 +628,14 @@ async function cmdSend(argv: string[]): Promise<number> {
       : '';
   const snapFooter = planSnapshotPath ? ' plan-snapshot=written' : '';
   const envFooter = boolFlag(args, 'clean-env') ? ' env=clean' : '';
+  const defaultsFooter = formatDefaultsFooter(agent.name, agentDefaults);
+  const traceFooter = tracePathForRound ? ` trace=${tracePathForRound}` : ' trace=unavailable';
   console.log(
     `[handoff] topic=${topicSlug} agent=${agent.name} mode=${mode} ` +
       `session=${response.sessionId ?? 'none'} ` +
       `verdict=${response.verdict} duration_ms=${response.durationMs} wall_ms=${wallMs}` +
+      defaultsFooter +
+      traceFooter +
       planFooter +
       snapFooter +
       envFooter,
@@ -693,6 +714,104 @@ function cmdShow(argv: string[]): number {
   for (const event of readHistory(workspace, topic)) {
     console.log(JSON.stringify(event));
   }
+  return 0;
+}
+
+function cmdResult(argv: string[]): number {
+  const args = parseFlags(argv, {
+    string: ['workspace', 'round', 'agent', 'part'],
+    boolean: ['latest', 'path', 'json'],
+    _: 'topic',
+  });
+  const topic = args.positional[0];
+  if (!topic) {
+    console.error(
+      'Usage: handoff result <topic> [--latest|--round N] [--agent <name>] ' +
+        '[--part output|prompt|both|metadata] [--path|--json]'
+    );
+    return 2;
+  }
+  try {
+    validateTopic(topic);
+  } catch (err) {
+    if (err instanceof TopicSlugError) {
+      console.error(err.message);
+      return 2;
+    }
+    throw err;
+  }
+
+  const agentRaw = strFlag(args, 'agent');
+  let agent: AgentName | undefined;
+  if (agentRaw !== undefined) {
+    const parsed = parseAgentArg(agentRaw);
+    if (!parsed) return 2;
+    agent = parsed;
+  }
+
+  const roundRaw = strFlag(args, 'round');
+  if (roundRaw && boolFlag(args, 'latest')) {
+    console.error('Use either --latest or --round N, not both.');
+    return 2;
+  }
+  let round: number | undefined;
+  if (roundRaw) {
+    round = Number.parseInt(roundRaw, 10);
+    if (!Number.isFinite(round) || round < 1) {
+      console.error(`--round must be a positive integer (got "${roundRaw}")`);
+      return 2;
+    }
+  }
+
+  const part = strFlag(args, 'part') ?? 'output';
+  if (!['output', 'prompt', 'both', 'metadata'].includes(part)) {
+    console.error(`--part must be output|prompt|both|metadata (got "${part}")`);
+    return 2;
+  }
+
+  const cwd = strFlag(args, 'workspace') ?? process.cwd();
+  const workspace = resolveWorkspace(cwd);
+  const traces = readTraces(workspace, topic)
+    .filter((trace) => (agent ? trace.agent === agent : true))
+    .filter((trace) => (round ? trace.round === round : true));
+
+  if (traces.length === 0) {
+    const scope = [
+      round ? `round ${round}` : 'latest round',
+      agent ? `agent ${agent}` : null,
+    ].filter(Boolean).join(', ');
+    console.error(`No stored handoff result for topic "${topic}" (${scope}).`);
+    return 1;
+  }
+
+  const trace = traces[traces.length - 1]!;
+  if (boolFlag(args, 'path')) {
+    console.log(traceFilePath(workspace, topic, trace.round, trace.agent));
+    return 0;
+  }
+  if (boolFlag(args, 'json')) {
+    console.log(JSON.stringify(trace, null, 2));
+    return 0;
+  }
+
+  if (part === 'metadata') {
+    const { prompt: _prompt, output: _output, ...metadata } = trace;
+    console.log(JSON.stringify(metadata, null, 2));
+    return 0;
+  }
+  if (part === 'prompt') {
+    writeTextWithFinalNewline(trace.prompt);
+    return 0;
+  }
+  if (part === 'both') {
+    console.log('--- prompt ---');
+    writeTextWithFinalNewline(trace.prompt);
+    console.log('--- output ---');
+    writeTextWithFinalNewline(trace.output);
+    return 0;
+  }
+
+  writeTextWithFinalNewline(trace.output);
   return 0;
 }
 
@@ -903,7 +1022,158 @@ function cmdDoctor(argv: string[]): number {
       `  ${name.padEnd(8)} resume=${adapter.supportsResume} modes=[${adapter.supportedModes.join(',')}]`
     );
   }
+  console.log('');
+  console.log('model defaults');
+  printModelDefaults();
   return 0;
+}
+
+function cmdModel(argv: string[]): number {
+  const args = parseFlags(argv, {
+    string: ['model', 'effort', 'speed'],
+    boolean: ['path', 'model-only', 'effort-only', 'speed-only'],
+    _: 'action',
+  });
+
+  if (boolFlag(args, 'path')) {
+    console.log(agentDefaultsPath());
+    return 0;
+  }
+
+  const action = args.positional[0] ?? 'list';
+  if (action === 'list') {
+    printModelDefaults();
+    console.log('');
+    console.log(`path: ${agentDefaultsPath()}`);
+    return 0;
+  }
+
+  if (action === 'set') {
+    const agent = parseAgentArg(args.positional[1]);
+    if (!agent) return 2;
+    const positionalModel = args.positional[2];
+    const model = strFlag(args, 'model') ?? positionalModel;
+    const effort = strFlag(args, 'effort');
+    let speed: 'fast' | 'default' | undefined;
+    try {
+      speed = normalizeSpeed(strFlag(args, 'speed'));
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 2;
+    }
+    if (!model && !effort && !speed) {
+      console.error('Usage: handoff model set <agent> <model> [--effort <level>] [--speed fast|default]');
+      console.error('       handoff model set <agent> --model <model> [--effort <level>] [--speed fast|default]');
+      return 2;
+    }
+    if (effort && agent === 'cursor') {
+      console.error('Cursor Agent CLI does not expose a separate effort flag; set only --model.');
+      return 2;
+    }
+    if (speed && agent === 'cursor') {
+      console.error('Cursor Agent encodes speed in the model id; set --model composer-2.5-fast instead.');
+      return 2;
+    }
+    const patch: { model?: string; effort?: string; speed?: 'fast' | 'default' } = {};
+    if (model) patch.model = model;
+    if (effort) patch.effort = effort;
+    if (speed) patch.speed = speed;
+    try {
+      setAgentDefaults(agent, patch);
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 2;
+    }
+    const resolved = resolveAgentDefaults(agent);
+    console.log(formatModelLine(agent, resolved));
+    console.log(`path: ${agentDefaultsPath()}`);
+    return 0;
+  }
+
+  if (action === 'unset') {
+    const agent = parseAgentArg(args.positional[1]);
+    if (!agent) return 2;
+    const unsetModel = boolFlag(args, 'model-only');
+    const unsetEffort = boolFlag(args, 'effort-only');
+    const unsetSpeed = boolFlag(args, 'speed-only');
+    const fields =
+      unsetModel || unsetEffort || unsetSpeed
+        ? { model: unsetModel, effort: unsetEffort, speed: unsetSpeed }
+        : { model: true, effort: true, speed: true };
+    unsetAgentDefaults(agent, fields);
+    console.log(formatModelLine(agent, resolveAgentDefaults(agent)));
+    console.log(`path: ${agentDefaultsPath()}`);
+    return 0;
+  }
+
+  console.error(
+    'Usage:\n' +
+      '  handoff model                         list defaults\n' +
+      '  handoff model --path                  print backing JSON path\n' +
+      '  handoff model set <agent> <model> [--effort <level>] [--speed fast|default]\n' +
+      '  handoff model unset <agent> [--model-only|--effort-only|--speed-only]',
+  );
+  return 2;
+}
+
+function normalizeSpeed(raw: string | undefined): 'fast' | 'default' | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === 'fast') return 'fast';
+  if (value === 'default' || value === 'standard') return 'default';
+  throw new Error(`Unsupported speed "${raw}". Supported: fast, default.`);
+}
+
+function parseAgentArg(raw: string | undefined): AgentName | null {
+  if (raw === 'claude' || raw === 'codex' || raw === 'cursor') return raw;
+  console.error(raw ? `Unknown agent "${raw}". Supported: claude, codex, cursor.` : 'Missing agent.');
+  return null;
+}
+
+function printModelDefaults(): void {
+  for (const agent of ['claude', 'codex', 'cursor'] as const) {
+    console.log(formatModelLine(agent, resolveAgentDefaults(agent)));
+  }
+}
+
+function formatModelLine(agent: AgentName, resolved: ReturnType<typeof resolveAgentDefaults>): string {
+  const stored = getStoredAgentDefaults(agent);
+  const envNames = envNamesForAgent(agent);
+  const modelText = resolved.model
+    ? `${resolved.model} (${resolved.modelSource})`
+    : agent === 'cursor'
+      ? `${CURSOR_BUILTIN_MODEL_DEFAULT} (built-in)`
+      : '(agent CLI default)';
+  const effortText = resolved.effort
+    ? `${resolved.effort} (${resolved.effortSource})`
+    : agent === 'cursor'
+      ? '(unsupported)'
+      : '(agent CLI default)';
+  const speedText = agent === 'cursor'
+    ? '(model id)'
+    : resolved.speed
+      ? `${resolved.speed} (${resolved.speedSource})`
+      : '(agent CLI default)';
+  const storedText =
+    stored.model || stored.effort || stored.speed
+      ? ` stored=${[
+          stored.model ? `model:${stored.model}` : null,
+          stored.effort ? `effort:${stored.effort}` : null,
+          stored.speed ? `speed:${stored.speed}` : null,
+        ]
+          .filter(Boolean)
+          .join(',')}`
+      : '';
+  const envText =
+    agent === 'cursor'
+      ? envNames.model
+      : `${envNames.model}, ${envNames.effort}, ${envNames.speed}`;
+  return (
+    `  ${agent.padEnd(8)} model=${modelText.padEnd(32)} effort=${effortText}` +
+    ` speed=${speedText}` +
+    ` env=[${envText}]` +
+    storedText
+  );
 }
 
 function cmdAlias(argv: string[]): number {
@@ -1946,6 +2216,55 @@ function buildChildEnv(clean: boolean): NodeJS.ProcessEnv {
   return env;
 }
 
+function writeAgentOutput(
+  output: string,
+  opts: { tracePath: string | null; resultCmd: string },
+): void {
+  const limit = outputPreviewLimit();
+  if (!opts.tracePath || output.length <= limit) {
+    writeTextWithFinalNewline(output);
+    return;
+  }
+
+  console.log(`[handoff] full output stored: ${opts.tracePath}`);
+  console.log(`[handoff] retrieve: ${opts.resultCmd}`);
+  console.log(`[handoff] output preview: first ${limit} of ${output.length} chars`);
+  writeTextWithFinalNewline(output.slice(0, limit));
+  console.log('[handoff] stdout preview truncated; use the retrieve command above for complete output.');
+}
+
+function writeTextWithFinalNewline(text: string): void {
+  process.stdout.write(text);
+  if (!text.endsWith('\n')) process.stdout.write('\n');
+}
+
+function outputPreviewLimit(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.AGENT_HANDOFF_OUTPUT_PREVIEW_CHARS;
+  if (!raw) return DEFAULT_OUTPUT_PREVIEW_CHARS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_OUTPUT_PREVIEW_CHARS;
+  return parsed;
+}
+
+function formatDefaultsFooter(
+  agent: AgentName,
+  defaults: ReturnType<typeof resolveAgentDefaults>,
+): string {
+  const parts: string[] = [];
+  if (defaults.model) {
+    parts.push(`model=${defaults.model}(${defaults.modelSource})`);
+  } else if (agent === 'cursor') {
+    parts.push(`model=${CURSOR_BUILTIN_MODEL_DEFAULT}(built-in)`);
+  }
+  if (defaults.effort && agent !== 'cursor') {
+    parts.push(`effort=${defaults.effort}(${defaults.effortSource})`);
+  }
+  if (defaults.speed && agent !== 'cursor') {
+    parts.push(`speed=${defaults.speed}(${defaults.speedSource})`);
+  }
+  return parts.length > 0 ? ` ${parts.join(' ')}` : '';
+}
+
 type FlagSpec = {
   string?: readonly string[];
   boolean?: readonly string[];
@@ -2082,12 +2401,15 @@ Usage:
   handoff send --agent <name> --mode <mode> [--topic <slug>|--current] [options]
   handoff list [--all|--stale] [--workspace <path>]
   handoff show <topic> [--workspace <path>]
+  handoff result <topic> [--latest|--round N] [--agent <name>] [--workspace <path>]
+                 [--part output|prompt|both|metadata] [--path|--json]
   handoff status [--workspace <path>]
   handoff use <topic> [--workspace <path>]
   handoff clear [--workspace <path>]
   handoff archive <topic> [--workspace <path>]
   handoff reset-session <topic> --agent <name> [--reason ...]
   handoff prune [--keep-count N] [--keep-days N] [--workspace <path>]
+  handoff model [set <agent> <model> [--effort <level>] [--speed fast|default] | unset <agent> | --path]
   handoff alias <resolved-path> <hash> | --list | --remove <path> | --suggest
   handoff doctor [--workspace <path>]
   handoff ui [--workspace <path>] [--all-workspaces]
@@ -2119,7 +2441,8 @@ Send options:
                                  when other active topics exist.
   --archive-and-new              Archive existing snapshot+history; create fresh.
   --allow-nested                 Override nested-call refusal.
-  --store-trace                  Persist full prompt+output as a trace file
+  --store-trace                  Compatibility no-op. Handoff now always
+                                 stores full prompt+output as a trace file
                                  under traces/<topic>/<round>-<agent>.json.
   --no-plan                      Skip auto-injection of the topic's plan.
   --snapshot-plan-on-edit        After send, snapshot plan to history if
@@ -2132,6 +2455,8 @@ Discovery:
   handoff use <topic>              Set the per-cwd default topic for --current.
   handoff status                   Show current pointer + active/stale topics.
   handoff list                     List active topics (use --all for all).
+  handoff result <topic>           Print a stored full prompt/output result.
+  handoff model                    View or set skill-owned model defaults.
   handoff doctor                   Print resolution diagnostic.
 
 Live monitoring:

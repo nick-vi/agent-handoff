@@ -12,6 +12,7 @@
 
 import { spawn } from 'node:child_process';
 import type { AgentAdapter, AgentRequest, AgentResponse } from './base.ts';
+import type { AgentInvocationDefaults } from '../model-defaults.ts';
 import type { Mode, Verdict } from '../schema/v1.ts';
 import { matchVerdictLine, resolveVerdict } from './base.ts';
 import { sanitizeSessionId } from '../session-id.ts';
@@ -40,7 +41,7 @@ export const claude: AgentAdapter = {
   supportedModes: SUPPORTED_MODES,
 
   async invoke(req: AgentRequest): Promise<AgentResponse> {
-    const args = buildClaudeArgs(req.sessionId, req.prompt);
+    const args = buildClaudeArgs(req.sessionId, req.prompt, req.defaults);
     const t0 = Date.now();
     const result = await spawnClaude(args, req.workspaceRoot, req.onSpawn, req.env);
     const durationMs = Date.now() - t0;
@@ -89,7 +90,8 @@ export const claude: AgentAdapter = {
 /**
  * Exported for unit tests. Translates handoff request shape into the
  * `claude --print --dangerously-skip-permissions --output-format json
- * [--resume <id>]` argv. Pure, no I/O.
+ * [--model <model>] [--effort <level>] [--settings <json>] [--resume <id>]` argv.
+ * Pure, no I/O.
  *
  * `--dangerously-skip-permissions` is always passed because handoff
  * invocations are non-interactive by design — there's no human at the
@@ -101,8 +103,23 @@ export const claude: AgentAdapter = {
  * `session_id` instead of regex-scraping a banner. Without this flag
  * claude has no obligation to emit the session id at all.
  */
-export function buildClaudeArgs(sessionId: string | null, prompt: string): string[] {
+export function buildClaudeArgs(
+  sessionId: string | null,
+  prompt: string,
+  defaults: AgentInvocationDefaults = {},
+): string[] {
   const args: string[] = ['--print', '--dangerously-skip-permissions', '--output-format', 'json'];
+  if (defaults.model) {
+    args.push('--model', defaults.model);
+  }
+  if (defaults.effort) {
+    args.push('--effort', defaults.effort);
+  }
+  if (defaults.speed === 'fast') {
+    args.push('--settings', JSON.stringify({ fastMode: true }));
+  } else if (defaults.speed === 'default') {
+    args.push('--settings', JSON.stringify({ fastMode: false }));
+  }
   if (sessionId) {
     args.push('--resume', sessionId);
   }

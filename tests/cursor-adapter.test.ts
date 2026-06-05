@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import { buildCursorArgs } from '../lib/agents/cursor.ts';
+import { buildCursorArgs, CURSOR_BUILTIN_MODEL_DEFAULT } from '../lib/agents/cursor.ts';
 
 describe('cursor buildArgs', () => {
   it('execute mode passes --yolo for non-interactive write', () => {
@@ -45,10 +45,23 @@ describe('cursor buildArgs', () => {
     expect(args[idx + 1]).toBe('json');
   });
 
+  it('passes built-in model default when no handoff override exists', () => {
+    const args = buildCursorArgs('execute', '/tmp/x', 'p');
+    const idx = args.indexOf('--model');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe(CURSOR_BUILTIN_MODEL_DEFAULT);
+  });
+
+  it('passes configured model instead of built-in default', () => {
+    const args = buildCursorArgs('execute', '/tmp/x', 'p', null, { model: 'gpt-5' });
+    const idx = args.indexOf('--model');
+    expect(args[idx + 1]).toBe('gpt-5');
+  });
+
   it('always passes the workspace as an absolute path arg', () => {
-    const args = buildCursorArgs('execute', '/Users/nick/code/foo', 'p');
+    const args = buildCursorArgs('execute', '/tmp/workspace', 'p');
     const idx = args.indexOf('--workspace');
-    expect(args[idx + 1]).toBe('/Users/nick/code/foo');
+    expect(args[idx + 1]).toBe('/tmp/workspace');
   });
 
   it('omits --resume when no session id', () => {

@@ -14,14 +14,14 @@
  * regardless of permission flag); the bypass just removes the human-
  * in-the-loop prompts that would otherwise hang an unattended run.
  *
- * Verdict: cursor's JSON output has a `summary` and a `result` field; we
- * default to `ok` on exit 0 and `error` otherwise. Callers that want a
- * richer verdict should have the calling agent emit a Verdict line in the
- * brief's output contract.
+ * Verdict: cursor's JSON output has a `summary` and a `result` field, but
+ * a `Verdict:` line in the body still wins. Otherwise we use the shared
+ * exit-code / empty-output fallback.
  */
 
 import { spawn } from 'node:child_process';
 import type { AgentAdapter, AgentRequest, AgentResponse } from './base.ts';
+import type { AgentInvocationDefaults } from '../model-defaults.ts';
 import type { Mode, Verdict } from '../schema/v1.ts';
 import { matchVerdictLine, resolveVerdict } from './base.ts';
 import { sanitizeSessionId } from '../session-id.ts';
@@ -34,7 +34,7 @@ const SUPPORTED_MODES: readonly Mode[] = [
   'debug',
 ] as const;
 
-const MODEL_DEFAULT = 'composer-2-fast';
+export const CURSOR_BUILTIN_MODEL_DEFAULT = 'composer-2.5-fast';
 
 export const cursor: AgentAdapter = {
   name: 'cursor',
@@ -42,7 +42,7 @@ export const cursor: AgentAdapter = {
   supportedModes: SUPPORTED_MODES,
 
   async invoke(req: AgentRequest): Promise<AgentResponse> {
-    const args = buildArgs(req.mode, req.workspaceRoot, req.prompt, req.sessionId);
+    const args = buildArgs(req.mode, req.workspaceRoot, req.prompt, req.sessionId, req.defaults ?? {});
     const t0 = Date.now();
     const result = await spawnCursor(args, req.workspaceRoot, req.onSpawn, req.env);
     const durationMs = Date.now() - t0;
@@ -65,8 +65,9 @@ export function buildCursorArgs(
   workspace: string,
   prompt: string,
   sessionId: string | null = null,
+  defaults: AgentInvocationDefaults = {},
 ): string[] {
-  return buildArgs(mode, workspace, prompt, sessionId);
+  return buildArgs(mode, workspace, prompt, sessionId, defaults);
 }
 
 function buildArgs(
@@ -74,16 +75,17 @@ function buildArgs(
   workspace: string,
   prompt: string,
   sessionId: string | null,
+  defaults: AgentInvocationDefaults,
 ): string[] {
-  // The current cursor-agent argv is mode-independent; mode scopes the
-  // prompt contract, not CLI permissions.
+  // Mode scopes the prompt contract; cursor-agent's argv is currently
+  // otherwise mode-independent.
   void mode;
   // cursor-agent CLI changes (post-2026.04.17): no `agent` subcommand,
   // prompt is a positional argument, no `--prompt` flag. The `--resume`
   // flag now takes its chatId in `--resume <chatId>` form (still
   // present, still optional).
   const args = ['--print', '--output-format', 'json', '--trust', '--workspace', workspace];
-  args.push('--model', MODEL_DEFAULT);
+  args.push('--model', defaults.model ?? CURSOR_BUILTIN_MODEL_DEFAULT);
   args.push('--yolo');
   if (sessionId) args.push('--resume', sessionId);
   // Prompt must be the LAST argument (positional).

@@ -10,7 +10,7 @@ cursor-agent \
   --output-format json \
   --trust \
   --workspace <path> \
-  --model composer-2-fast \
+  --model composer-2.5-fast \
   --yolo \
   [--resume <chatId>] \
   "<prompt>"
@@ -46,9 +46,19 @@ time-low dword like codex's uuidv7).
 
 ## Default model
 
-`composer-2-fast`. Cheap, fast, suitable for bounded execution. Override
-via `--model` if needed (handoff does not yet expose this; edit
-`lib/agents/cursor.ts` if you want it).
+`composer-2.5-fast`. Cheap, fast, suitable for bounded execution. Override
+the handoff-owned default with:
+
+```bash
+handoff model set cursor gpt-5
+```
+
+This changes the `--model <model>` value passed to `cursor-agent`.
+`handoff model unset cursor` returns to the built-in `composer-2.5-fast`
+fallback.
+
+Cursor Agent does not expose a separate handoff speed knob; choose a
+`*-fast` model ID such as `composer-2.5-fast`.
 
 ## Modes supported
 

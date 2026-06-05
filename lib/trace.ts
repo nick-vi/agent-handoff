@@ -1,13 +1,13 @@
 /**
- * Trace storage — optional persistence of full prompt+response bodies
- * per round, separate from the JSONL event log.
+ * Trace storage — persistence of full prompt+response bodies per round,
+ * separate from the JSONL event log.
  *
  * History (`<topic>.history.jsonl`) stores categorical metadata
  * (round, agent, mode, verdict, duration) suitable for fast indexing.
- * Trace files store the heavy bodies (prompt text, full agent output)
- * the user opted into via `--store-trace`. Splitting them keeps the
- * event log scannable for `handoff log` / `handoff tail` while still giving
- * forensic depth when needed.
+ * Trace files store the heavy bodies (prompt text, full agent output).
+ * Splitting them keeps the event log scannable for `handoff log` /
+ * `handoff tail` while guaranteeing full output is recoverable when stdout
+ * is previewed or an upstream agent truncates what it observed.
  *
  * Layout:
  *   `<state-dir>/sessions/<workspace>/traces/<topic>/<round>-<agent>.json`
@@ -66,8 +66,7 @@ export function writeTrace(ws: WorkspaceInfo, trace: TraceV1): void {
 
 /**
  * Read all traces for a topic in round-ascending order. Returns empty
- * array if traces dir doesn't exist (i.e. user never ran with
- * --store-trace).
+ * array if traces dir doesn't exist.
  */
 export function readTraces(ws: WorkspaceInfo, topic: string): TraceV1[] {
   const dir = topicTracesDir(ws, topic);
@@ -88,7 +87,7 @@ export function readTraces(ws: WorkspaceInfo, topic: string): TraceV1[] {
   return out;
 }
 
-/** Path helper exposed for `handoff show --traces` and tests. */
+/** Path helper used by `handoff result --path` and tests. */
 export function traceFilePath(
   ws: WorkspaceInfo,
   topic: string,

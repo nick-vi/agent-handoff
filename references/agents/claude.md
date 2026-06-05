@@ -6,22 +6,24 @@ CLI: `claude` (Claude Code)
 
 ```bash
 # new session
-claude --print --dangerously-skip-permissions "<prompt>"
+claude --print --dangerously-skip-permissions --output-format json "<prompt>"
 
 # resume existing
-claude --print --dangerously-skip-permissions --resume <session-id> "<prompt>"
+claude --print --dangerously-skip-permissions --output-format json --resume <session-id> "<prompt>"
 ```
 
 `--print` is required for non-interactive output. Without it, Claude
 launches its TUI.
 
+`--output-format json` is always passed so the handoff receives a
+structured envelope with `session_id`, `result`, `is_error`, and
+permission-denial details.
+
 `--dangerously-skip-permissions` is always passed. Without it, claude
 prompts on every write or Bash invocation; with no human at the TTY
 the run hangs until timeout and the handoff sees a zero-exit empty
 response that defaults to `Verdict: ok` — false signal. Mirrors
-codex's `--full-auto` and cursor's `--yolo` (which cursor only sets
-for `execute`; claude needs the bypass for any mode that might reach
-for Bash, including audit/debug).
+codex's `--full-auto` and cursor's `--yolo`.
 
 ## Session model
 
@@ -34,8 +36,9 @@ The handoff tracks per-(topic, claude) session IDs in the snapshot. If
 the local transcript is deleted, `--resume <uuid>` errors; the handoff
 records that error response and **does not** fall back to a new
 session — the next round would pass the same (now-dead) ID and likely
-fail again. Workaround: `handoff archive <topic>` and re-send to start
-clean.
+fail again. Workaround: `handoff reset-session <topic> --agent claude
+--reason expired` to clear only Claude's session pointer, or archive
+and re-send to start completely clean.
 
 ## Output parsing
 
@@ -44,36 +47,51 @@ Verdict line:
 ^[\s\-*]*Verdict[:\s]+\s*(ok|advisory|blocked|error)\b
 ```
 
-Session ID extraction is best-effort; Claude's stdout doesn't reliably
-emit a `session-id=` banner the way codex does. The handoff looks for:
+Claude stdout is expected to be a JSON object from `--output-format
+json`. The handoff reads:
 ```
-\bsession[_\- ]id[:=\s]+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b
+{
+  "session_id": "...",
+  "result": "...",
+  "is_error": false,
+  "permission_denials": []
+}
 ```
 
-If the regex misses, the handoff reuses the prior session ID (when
-resuming) or null (when starting). The trade-off: a new session that
-mints a UUID we don't capture means the next round starts another new
-session instead of resuming. Caller can pass `--session-id <uuid>` if
-they captured it from somewhere else.
+If the JSON envelope is missing or malformed, the adapter treats the
+round as an error instead of guessing from free-form stdout.
 
 ## Default model
 
-Whatever the Claude Code config picks. Override per-call via
-`--model <name>` (handoff doesn't surface this yet).
+By default, whatever the Claude Code config picks. Handoff can pin a
+skill-owned per-invocation model and effort:
+
+```bash
+# Example pin; update as Anthropic model aliases change.
+handoff model set claude opus --effort max --speed fast
+```
+
+This causes sends to pass `--model <model>` and `--effort <level>` to
+`claude`. With `--speed fast`, handoff also passes a per-session
+`--settings '{"fastMode":true}'` override. Unset with
+`handoff model unset claude` to return to Claude Code's own
+config/default.
 
 ## Modes supported
 
-`consult`, `audit`, `review`, `debug`.
+`consult`, `audit`, `review`, `debug`, `execute`.
 
 ## Quirks
 
 - **Project context**. Claude reads `CLAUDE.md` from the cwd
   automatically. The brief in the prompt is supplementary.
-- **No execute mode here**. Claude Code can write code, but cursor with
-  `--yolo` is the cleaner executor with explicit project-context wiring
-  and a tighter brief contract.
+- **Execute is supported**. Cursor is still the faster primary executor
+  for bounded code edits; Claude is useful when execution needs more
+  deliberate multi-file reasoning.
 - **Conversation length**. Long resumed sessions accumulate context;
   if a topic crosses many rounds with claude, eventually the session
-  window saturates and behavior degrades. Archive with `handoff archive
-  <topic> --archive-and-new` to start a fresh session while preserving
-  history.
+  window saturates and behavior degrades. Use
+  `handoff reset-session <topic> --agent claude --reason expired` to
+  mint a fresh Claude session while preserving topic history, or
+  `handoff send --topic <topic> --archive-and-new ...` to archive the
+  topic and start clean under the same slug.

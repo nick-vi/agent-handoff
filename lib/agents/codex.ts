@@ -13,11 +13,13 @@
  *
  * Verdict is parsed from the wrapper's expected output contract:
  *   `Verdict: ok | advisory | blocked | error`
- * If the body doesn't include a Verdict line, we default to `advisory`.
+ * If the body doesn't include a Verdict line, exit code and the shared
+ * empty-output guard determine the fallback verdict.
  */
 
 import { spawn } from 'node:child_process';
 import type { AgentAdapter, AgentRequest, AgentResponse } from './base.ts';
+import type { AgentInvocationDefaults } from '../model-defaults.ts';
 import type { Mode } from '../schema/v1.ts';
 import { matchVerdictLine, resolveVerdict } from './base.ts';
 import { sanitizeSessionId } from '../session-id.ts';
@@ -33,7 +35,7 @@ export const codex: AgentAdapter = {
   supportedModes: SUPPORTED_MODES,
 
   async invoke(req: AgentRequest): Promise<AgentResponse> {
-    const args = buildCodexArgs(req.sessionId, req.prompt);
+    const args = buildCodexArgs(req.sessionId, req.prompt, req.defaults);
 
     const t0 = Date.now();
     const result = await spawnCodex(args, req.workspaceRoot, req.onSpawn, req.env);
@@ -50,17 +52,39 @@ export const codex: AgentAdapter = {
 };
 
 /**
- * Exported for unit tests. `codex exec [resume <id>] --full-auto <prompt>`.
+ * Exported for unit tests.
+ * `codex exec [resume <id>] [--model <model>] [-c model_reasoning_effort=...]
+ * [-c features.fast_mode=true -c service_tier="fast"] --full-auto <prompt>`.
  * Pure; no I/O.
  */
-export function buildCodexArgs(sessionId: string | null, prompt: string): string[] {
+export function buildCodexArgs(
+  sessionId: string | null,
+  prompt: string,
+  defaults: AgentInvocationDefaults = {},
+): string[] {
   const args: string[] = ['exec'];
   if (sessionId) {
     args.push('resume', sessionId);
   }
+  if (defaults.model) {
+    args.push('--model', defaults.model);
+  }
+  if (defaults.effort) {
+    args.push('-c', `model_reasoning_effort=${tomlString(defaults.effort)}`);
+  }
+  if (defaults.speed === 'fast') {
+    args.push('-c', 'features.fast_mode=true');
+    args.push('-c', `service_tier=${tomlString('fast')}`);
+  } else if (defaults.speed === 'default') {
+    args.push('-c', `service_tier=${tomlString('default')}`);
+  }
   args.push('--full-auto');
   args.push(prompt);
   return args;
+}
+
+function tomlString(value: string): string {
+  return JSON.stringify(value);
 }
 
 type SpawnResult = { stdout: string; stderr: string; code: number | null };

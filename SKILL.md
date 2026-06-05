@@ -57,6 +57,7 @@ handoff list                # active topics only
 handoff list --all          # include stale
 handoff show <topic>        # snapshot + full history
 handoff doctor              # resolution diagnostic
+handoff result <topic> --latest --agent codex     # full stored output
 
 # Live monitoring
 handoff tail <topic>        # stream new history events as they're written
@@ -80,17 +81,28 @@ handoff ui --all-workspaces                        # aggregate every workspace b
 handoff ui --port 0                                # pick a free port
 handoff ui --no-transcripts                        # metadata-only local UI
 
-# Forensic capture (opt-in)
+# Durable output capture (automatic)
 handoff send --agent codex --mode review --topic foo \
-  --prompt-file plan.md --store-trace
-# Persists prompt + full output as
+  --prompt-file plan.md
+# Persists exact prompt + full output as
 #   <state-dir>/sessions/<workspace>/traces/<topic>/000001-codex.json
-# History.jsonl stays slim (categorical metadata only).
+# Retrieve it with:
+handoff result foo --round 1 --agent codex --part output
+# History.jsonl stays slim (categorical metadata only). Very large stdout
+# is previewed, with the retrieval command printed before the preview.
 
 # Harden child environment when desired
 handoff send --agent codex --mode review --topic foo \
   --prompt-file plan.md --clean-env
 # Child receives PATH/HOME/shell/user/temp/locale/XDG + AGENT_HANDOFF_* only.
+
+# Skill-owned model defaults (stored under the handoff state dir)
+handoff model                                      # list effective defaults
+# Example pins; update as provider model names change.
+handoff model set codex gpt-5.5 --effort xhigh --speed fast
+handoff model set claude opus --effort max --speed fast
+handoff model set cursor composer-2.5-fast         # Cursor model
+handoff model unset codex --speed-only             # remove one setting
 
 # Plan artifacts (per-topic execution scaffolding)
 handoff plan auth-redesign --set-file design.md   # seed the plan
@@ -321,6 +333,7 @@ references/
   methodology.md                  when to handoff vs inline
   modes.md                        mode → agent capability matrix
   sessions.md                     registry schema, slug rules, TTLs
+  model-defaults.md               skill-owned per-agent model defaults
   glossary.md                     terms used across docs
   troubleshooting.md              common failure modes
   agents/
@@ -363,6 +376,10 @@ under `<state>/running/<workspace>/<topic>--<agent>--<run_id>.json`
   files, parsed into role/text turns to keep token cost low. Default
   20 turns, `--full` for full message bodies, `--format raw` for
   pass-through, `--agent <name>` to scope to one agent.
+- `handoff result <topic> --latest --agent <name>` — print the durable
+  full output captured for a completed round. Use `--part prompt` to
+  inspect the exact prompt sent to the child agent, `--path` to print
+  the JSON trace path, or `--json` for the whole trace envelope.
 
 Hitting Ctrl-C in the handoff process that spawned the child also
 forwards SIGINT — the live-PID handler is registered for the

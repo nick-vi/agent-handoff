@@ -118,10 +118,7 @@ Archives are immutable — pruning is the only delete.
 
 ## Privacy
 
-The registry stores **summaries, verdicts, session IDs, round counts,
-timestamps**. NOT prompts, NOT response bodies. Each agent owns its own
-transcript (codex server-side, claude local-transcript, cursor stateless);
-duplicating in the registry would risk leakage and bloat.
-
-Opt in to local trace via `--store-trace`; trace files store the full
-prompt and full agent output under `traces/<topic>/<round>-<agent>.json`.
+The registry event log stores **summaries, verdicts, session IDs, round
+counts, timestamps**. Prompt and response bodies live in per-round trace
+files under `traces/<topic>/<round>-<agent>.json` so full outputs remain
+recoverable without bloating `handoff log` / `handoff tail`.
