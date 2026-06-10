@@ -90,7 +90,8 @@ export const claude: AgentAdapter = {
 /**
  * Exported for unit tests. Translates handoff request shape into the
  * `claude --print --dangerously-skip-permissions --output-format json
- * [--model <model>] [--effort <level>] [--settings <json>] [--resume <id>]` argv.
+ * [--model <model>] [--fallback-model <models>] [--effort <level>]
+ * [--settings <json>] [--resume <id>]` argv.
  * Pure, no I/O.
  *
  * `--dangerously-skip-permissions` is always passed because handoff
@@ -111,6 +112,9 @@ export function buildClaudeArgs(
   const args: string[] = ['--print', '--dangerously-skip-permissions', '--output-format', 'json'];
   if (defaults.model) {
     args.push('--model', defaults.model);
+  }
+  if (defaults.fallbackModel) {
+    args.push('--fallback-model', defaults.fallbackModel);
   }
   if (defaults.effort) {
     args.push('--effort', defaults.effort);

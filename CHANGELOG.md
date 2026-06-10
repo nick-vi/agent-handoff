@@ -43,6 +43,12 @@ Semantic-ish: `MAJOR.MINOR.PATCH`.
   stays slim (categorical metadata only); `handoff result` retrieves
   complete bodies when stdout is previewed/truncated. `--store-trace`
   remains accepted as a compatibility no-op.
+- **Claude model profiles + fallback** — `handoff model set claude`
+  supports version-conscious profiles (`latest-claude`, `latest-opus`,
+  `fast-opus`) and Claude's native `--fallback-model`. Fable resolves
+  only on Claude Code `2.1.170+`; older or unverifiable CLIs fall back
+  to Opus before spawn. Fast mode is suppressed for non-Opus effective
+  models.
 - **`handoff tail <topic>`** — stream new history events as they're
   appended. Polling-based (500ms), portable. `--from-start` to
   print existing events too.

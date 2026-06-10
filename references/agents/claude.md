@@ -68,14 +68,23 @@ skill-owned per-invocation model and effort:
 
 ```bash
 # Example pin; update as Anthropic model aliases change.
-handoff model set claude opus --effort max --speed fast
+handoff model set claude latest-claude --effort max --fallback-model opus,sonnet
+handoff model set claude fast-opus --effort max
 ```
 
 This causes sends to pass `--model <model>` and `--effort <level>` to
-`claude`. With `--speed fast`, handoff also passes a per-session
-`--settings '{"fastMode":true}'` override. Unset with
+`claude`. With `--fallback-model`, handoff passes Claude Code's native
+fallback chain. With `--speed fast`, handoff also passes a per-session
+`--settings '{"fastMode":true}'` override, but suppresses fast mode for
+non-Opus effective models. Unset with
 `handoff model unset claude` to return to Claude Code's own
 config/default.
+
+Version-conscious profiles:
+
+- `latest-claude`: Fable on Claude Code `2.1.170+`; otherwise Opus.
+- `latest-opus`: Opus alias.
+- `fast-opus`: Opus alias plus fast mode.
 
 ## Modes supported
 

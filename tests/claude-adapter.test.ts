@@ -72,6 +72,21 @@ describe('claude buildArgs', () => {
     ]);
   });
 
+  it('passes configured fallback model chain before prompt', () => {
+    const args = buildClaudeArgs(null, 'p', { model: 'fable', fallbackModel: 'opus,sonnet' });
+    expect(args).toEqual([
+      '--print',
+      '--dangerously-skip-permissions',
+      '--output-format',
+      'json',
+      '--model',
+      'fable',
+      '--fallback-model',
+      'opus,sonnet',
+      'p',
+    ]);
+  });
+
   it('passes configured fast mode settings before prompt', () => {
     const args = buildClaudeArgs(null, 'p', { model: 'opus', speed: 'fast' });
     expect(args).toEqual([

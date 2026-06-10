@@ -75,7 +75,11 @@ echo "Verdict: ok"
   writeFileSync(
     claude,
     `#!/usr/bin/env sh
-printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"handoff-caller-agent=\${AGENT_HANDOFF_CALLER_AGENT}\\\\nVerdict: ok\\\\n\\",\\"session_id\\":\\"6989a01b-a788-482d-a121-57780ea123bf\\"}"
+if [ "$1" = "--version" ]; then
+  echo "\${HANDOFF_FAKE_CLAUDE_VERSION:-2.1.150 (Claude Code)}"
+  exit 0
+fi
+printf '%s\\n' "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"is_error\\":false,\\"result\\":\\"handoff-caller-agent=\${AGENT_HANDOFF_CALLER_AGENT}\\\\nclaude-argv=$*\\\\nVerdict: ok\\\\n\\",\\"session_id\\":\\"6989a01b-a788-482d-a121-57780ea123bf\\"}"
 `,
     'utf-8'
   );
@@ -259,6 +263,46 @@ describe('send context propagation', () => {
 
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('handoff-caller-agent=claude');
+  });
+
+  it('resolves Claude latest-claude to opus before spawn on older Claude Code', () => {
+    const f = setup();
+    writeFileSync(
+      join(f.stateRoot, 'agent-defaults.json'),
+      JSON.stringify({
+        schema_version: 1,
+        agents: {
+          claude: {
+            model: 'latest-claude',
+            effort: 'max',
+            fallbackModel: 'opus,sonnet',
+            updated_at: '2026-06-10T00:00:00.000Z',
+          },
+        },
+      }),
+    );
+
+    const r = handoff(
+      f,
+      [
+        'send',
+        '--agent',
+        'claude',
+        '--mode',
+        'review',
+        '--topic',
+        'claude-version',
+        '--prompt',
+        'review this',
+      ],
+      { HANDOFF_FAKE_CLAUDE_VERSION: '2.1.150 (Claude Code)' },
+    );
+
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain('latest-claude requires Claude Code 2.1.170+');
+    expect(r.stdout).toContain('--model opus');
+    expect(r.stdout).toContain('--fallback-model opus,sonnet');
+    expect(r.stdout).toContain('model=opus(runtime)');
   });
 
   it('records explicit caller identity before stale agent env', () => {

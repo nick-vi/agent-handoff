@@ -28,6 +28,8 @@ export type AgentInvocationDefaults = {
    * - cursor: speed is encoded in the model ID, e.g. `composer-2.5-fast`.
    */
   speed?: SpeedDefault;
+  /** Claude-only fallback chain passed as `--fallback-model <models>`. */
+  fallbackModel?: string;
 };
 
 type AgentDefaults = AgentInvocationDefaults & {
@@ -40,12 +42,14 @@ type DefaultsFile = {
 };
 
 export type ResolvedAgentDefaults = AgentInvocationDefaults & {
-  modelSource: 'env' | 'state' | 'unset';
-  effortSource: 'env' | 'state' | 'unset';
-  speedSource: 'env' | 'state' | 'unset';
+  modelSource: DefaultSource;
+  effortSource: DefaultSource;
+  speedSource: DefaultSource;
+  fallbackModelSource: DefaultSource;
 };
 
 export type SpeedDefault = 'fast' | 'default';
+export type DefaultSource = 'env' | 'state' | 'runtime' | 'unset';
 
 const EMPTY_DEFAULTS: DefaultsFile = {
   schema_version: 1,
@@ -70,6 +74,12 @@ const SPEED_ENV: Record<AgentName, string> = {
   cursor: 'AGENT_HANDOFF_CURSOR_SPEED',
 };
 
+const FALLBACK_MODEL_ENV: Record<AgentName, string> = {
+  claude: 'AGENT_HANDOFF_CLAUDE_FALLBACK_MODEL',
+  codex: 'AGENT_HANDOFF_CODEX_FALLBACK_MODEL',
+  cursor: 'AGENT_HANDOFF_CURSOR_FALLBACK_MODEL',
+};
+
 export function agentDefaultsPath(): string {
   return join(resolveStateDir(), 'agent-defaults.json');
 }
@@ -91,6 +101,7 @@ export function getStoredAgentDefaults(agent: AgentName): AgentInvocationDefault
   if (agent === 'cursor') return out;
   if (entry.effort) out.effort = entry.effort;
   if (entry.speed) out.speed = entry.speed;
+  if (agent === 'claude' && entry.fallbackModel) out.fallbackModel = entry.fallbackModel;
   return out;
 }
 
@@ -99,21 +110,25 @@ export function resolveAgentDefaults(agent: AgentName, env: NodeJS.ProcessEnv = 
   const modelEnv = cleanValue(env[MODEL_ENV[agent]]);
   const effortEnv = agent === 'cursor' ? null : cleanValue(env[EFFORT_ENV[agent]]);
   const speedEnv = agent === 'cursor' ? null : normalizeSpeedValue(cleanValue(env[SPEED_ENV[agent]]));
+  const fallbackModelEnv = agent === 'claude' ? cleanValue(env[FALLBACK_MODEL_ENV[agent]]) : null;
   const legacyCodexEffortEnv =
     agent === 'codex' ? cleanValue(env.AGENT_HANDOFF_CODEX_EFFORT) : null;
 
   const model = modelEnv ?? stored.model;
   const effort = effortEnv ?? legacyCodexEffortEnv ?? stored.effort;
   const speed = speedEnv ?? stored.speed;
+  const fallbackModel = fallbackModelEnv ?? stored.fallbackModel;
 
   const out: ResolvedAgentDefaults = {
     modelSource: modelEnv ? 'env' : stored.model ? 'state' : 'unset',
     effortSource: effortEnv || legacyCodexEffortEnv ? 'env' : stored.effort ? 'state' : 'unset',
     speedSource: speedEnv ? 'env' : stored.speed ? 'state' : 'unset',
+    fallbackModelSource: fallbackModelEnv ? 'env' : stored.fallbackModel ? 'state' : 'unset',
   };
   if (model) out.model = model;
   if (effort) out.effort = effort;
   if (speed) out.speed = speed;
+  if (fallbackModel) out.fallbackModel = fallbackModel;
   return out;
 }
 
@@ -124,6 +139,9 @@ export function setAgentDefaults(agent: AgentName, patch: AgentInvocationDefault
   if (agent === 'cursor' && patch.speed !== undefined) {
     throw new Error('Cursor Agent encodes speed in the model id; set only model.');
   }
+  if (agent !== 'claude' && patch.fallbackModel !== undefined) {
+    throw new Error('Fallback model chains are currently supported only for Claude.');
+  }
   ensureStateDir();
   const file = readAgentDefaultsFile();
   const prev = file.agents[agent] ?? {};
@@ -133,6 +151,9 @@ export function setAgentDefaults(agent: AgentName, patch: AgentInvocationDefault
   if (patch.speed !== undefined) {
     const speed = normalizeSpeedValue(normalizeValue('speed', patch.speed));
     if (speed) next.speed = speed;
+  }
+  if (patch.fallbackModel !== undefined) {
+    next.fallbackModel = normalizeFallbackModel(patch.fallbackModel);
   }
   next.updated_at = new Date().toISOString();
   const updated: DefaultsFile = {
@@ -145,7 +166,7 @@ export function setAgentDefaults(agent: AgentName, patch: AgentInvocationDefault
 
 export function unsetAgentDefaults(
   agent: AgentName,
-  fields: { model?: boolean; effort?: boolean; speed?: boolean },
+  fields: { model?: boolean; effort?: boolean; speed?: boolean; fallbackModel?: boolean },
 ): DefaultsFile {
   ensureStateDir();
   const file = readAgentDefaultsFile();
@@ -154,10 +175,11 @@ export function unsetAgentDefaults(
   if (fields.model) delete next.model;
   if (fields.effort) delete next.effort;
   if (fields.speed) delete next.speed;
+  if ('fallbackModel' in fields && fields.fallbackModel) delete next.fallbackModel;
   next.updated_at = new Date().toISOString();
 
   const updatedAgents = { ...file.agents };
-  if (!next.model && !next.effort && !next.speed) {
+  if (!next.model && !next.effort && !next.speed && !next.fallbackModel) {
     delete updatedAgents[agent];
   } else {
     updatedAgents[agent] = next;
@@ -171,11 +193,34 @@ export function unsetAgentDefaults(
   return updated;
 }
 
-export function envNamesForAgent(agent: AgentName): { model: string; effort: string; speed: string } {
+export function envNamesForAgent(agent: AgentName): {
+  model: string;
+  effort: string;
+  speed: string;
+  fallbackModel: string;
+} {
   if (agent === 'cursor') {
-    return { model: MODEL_ENV[agent], effort: 'unsupported', speed: 'unsupported' };
+    return {
+      model: MODEL_ENV[agent],
+      effort: 'unsupported',
+      speed: 'unsupported',
+      fallbackModel: 'unsupported',
+    };
   }
-  return { model: MODEL_ENV[agent], effort: EFFORT_ENV[agent], speed: SPEED_ENV[agent] };
+  if (agent === 'claude') {
+    return {
+      model: MODEL_ENV[agent],
+      effort: EFFORT_ENV[agent],
+      speed: SPEED_ENV[agent],
+      fallbackModel: FALLBACK_MODEL_ENV[agent],
+    };
+  }
+  return {
+    model: MODEL_ENV[agent],
+    effort: EFFORT_ENV[agent],
+    speed: SPEED_ENV[agent],
+    fallbackModel: 'unsupported',
+  };
 }
 
 function cleanValue(value: string | undefined): string | null {
@@ -184,7 +229,7 @@ function cleanValue(value: string | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function normalizeValue(field: 'model' | 'effort' | 'speed', value: string): string {
+function normalizeValue(field: 'model' | 'effort' | 'speed' | 'fallback model', value: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error(`${field} must be non-empty`);
   if (/[\r\n]/.test(trimmed)) throw new Error(`${field} must be a single line`);
@@ -197,6 +242,16 @@ function normalizeSpeedValue(value: string | null): SpeedDefault | null {
   if (normalized === 'fast') return 'fast';
   if (normalized === 'default' || normalized === 'standard') return 'default';
   throw new Error(`Unsupported speed "${value}". Supported: fast, default.`);
+}
+
+function normalizeFallbackModel(value: string): string {
+  const normalized = normalizeValue('fallback model', value)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(',');
+  if (!normalized) throw new Error('fallback model must include at least one model');
+  return normalized;
 }
 
 function isDefaultsFile(value: unknown): value is DefaultsFile {
@@ -214,6 +269,7 @@ function isDefaultsFile(value: unknown): value is DefaultsFile {
       if (typeof d.speed !== 'string') return false;
       if (!isPersistedSpeedDefault(d.speed)) return false;
     }
+    if (d.fallbackModel !== undefined && typeof d.fallbackModel !== 'string') return false;
     if (d.updated_at !== undefined && typeof d.updated_at !== 'string') return false;
   }
   return true;

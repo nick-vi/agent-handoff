@@ -2,7 +2,7 @@
 // @bun
 
 // bin/agent-handoff.ts
-import { spawnSync as spawnSync5 } from "child_process";
+import { spawnSync as spawnSync6 } from "child_process";
 import { existsSync as existsSync18, readFileSync as readFileSync13 } from "fs";
 
 // lib/atomic-file.ts
@@ -256,6 +256,9 @@ function buildClaudeArgs(sessionId, prompt, defaults = {}) {
   const args = ["--print", "--dangerously-skip-permissions", "--output-format", "json"];
   if (defaults.model) {
     args.push("--model", defaults.model);
+  }
+  if (defaults.fallbackModel) {
+    args.push("--fallback-model", defaults.fallbackModel);
   }
   if (defaults.effort) {
     args.push("--effort", defaults.effort);
@@ -1483,6 +1486,108 @@ function toolArgsText(value) {
 // lib/agents/cursor.ts
 var CURSOR_BUILTIN_MODEL_DEFAULT2 = "composer-2.5-fast";
 
+// lib/agents/claude-models.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+var CLAUDE_FABLE_MIN_VERSION = {
+  major: 2,
+  minor: 1,
+  patch: 170,
+  raw: "2.1.170"
+};
+var FABLE_MODELS = new Set(["fable", "claude-fable-5"]);
+var LATEST_CLAUDE_PROFILE = "latest-claude";
+var LATEST_OPUS_PROFILE = "latest-opus";
+var FAST_OPUS_PROFILE = "fast-opus";
+var DEFAULT_FABLE_FALLBACK = "opus,sonnet";
+function readClaudeCodeVersionText(env = process.env) {
+  const result = spawnSync2("claude", ["--version"], {
+    encoding: "utf-8",
+    env,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.error || result.status !== 0)
+    return null;
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() || null;
+}
+function parseClaudeCodeVersion(text) {
+  if (!text)
+    return null;
+  const match = /\b(\d+)\.(\d+)\.(\d+)\b/.exec(text);
+  if (!match)
+    return null;
+  return {
+    major: Number.parseInt(match[1], 10),
+    minor: Number.parseInt(match[2], 10),
+    patch: Number.parseInt(match[3], 10),
+    raw: match[0]
+  };
+}
+function supportsClaudeFable(version) {
+  return version !== null && compareClaudeVersions(version, CLAUDE_FABLE_MIN_VERSION) >= 0;
+}
+function resolveClaudeInvocationDefaults(input, opts = {}) {
+  const defaults = { ...input };
+  const version = parseClaudeCodeVersion(opts.versionText ?? null);
+  const notes = [];
+  const requestedModel = defaults.model?.trim();
+  const requestedKey = requestedModel?.toLowerCase();
+  if (requestedKey === LATEST_CLAUDE_PROFILE) {
+    if (supportsClaudeFable(version)) {
+      defaults.model = "fable";
+      setRuntimeSource(defaults, "modelSource");
+      setDefaultFallback(defaults);
+    } else {
+      defaults.model = "opus";
+      setRuntimeSource(defaults, "modelSource");
+      notes.push(version ? `latest-claude requires Claude Code ${CLAUDE_FABLE_MIN_VERSION.raw}+ for fable; ${version.raw} resolves to opus.` : "latest-claude could not verify Claude Code version; resolving to opus.");
+    }
+  } else if (requestedKey === LATEST_OPUS_PROFILE) {
+    defaults.model = "opus";
+    setRuntimeSource(defaults, "modelSource");
+  } else if (requestedKey === FAST_OPUS_PROFILE) {
+    defaults.model = "opus";
+    defaults.speed = "fast";
+    setRuntimeSource(defaults, "modelSource");
+    setRuntimeSource(defaults, "speedSource");
+  } else if (requestedKey && FABLE_MODELS.has(requestedKey)) {
+    if (version && !supportsClaudeFable(version)) {
+      defaults.model = "opus";
+      setRuntimeSource(defaults, "modelSource");
+      notes.push(`${requestedModel} requires Claude Code ${CLAUDE_FABLE_MIN_VERSION.raw}+; ${version.raw} resolves to opus.`);
+    } else {
+      setDefaultFallback(defaults);
+    }
+  }
+  if (defaults.speed === "fast" && defaults.model && !isClaudeOpusModel(defaults.model)) {
+    notes.push(`fast mode is Opus-only in Claude Code; suppressing speed=fast for ${defaults.model}.`);
+    delete defaults.speed;
+    setRuntimeSource(defaults, "speedSource");
+  }
+  return { defaults, version, notes };
+}
+function compareClaudeVersions(a, b) {
+  if (a.major !== b.major)
+    return a.major - b.major;
+  if (a.minor !== b.minor)
+    return a.minor - b.minor;
+  return a.patch - b.patch;
+}
+function isClaudeOpusModel(model) {
+  const normalized = model.toLowerCase();
+  return normalized === "opus" || normalized === "latest-opus" || normalized.includes("opus");
+}
+function setDefaultFallback(defaults) {
+  if (!defaults.fallbackModel) {
+    defaults.fallbackModel = DEFAULT_FABLE_FALLBACK;
+    setRuntimeSource(defaults, "fallbackModelSource");
+  }
+}
+function setRuntimeSource(defaults, key) {
+  if (key in defaults) {
+    defaults[key] = "runtime";
+  }
+}
+
 // lib/local-sessions.ts
 import { existsSync as existsSync9, readdirSync as readdirSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
@@ -1926,7 +2031,7 @@ function sha256(s) {
 }
 
 // lib/workspace.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
+import { spawnSync as spawnSync3 } from "node:child_process";
 import { createHash as createHash2 } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { basename, dirname as dirname6, isAbsolute, resolve } from "node:path";
@@ -1968,7 +2073,7 @@ function resolveWorkspace(cwd = process.cwd()) {
   };
 }
 function probeGitRepoRoot(cwd) {
-  const result = spawnSync2("git", ["rev-parse", "--git-common-dir"], {
+  const result = spawnSync3("git", ["rev-parse", "--git-common-dir"], {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"]
@@ -2015,6 +2120,11 @@ var SPEED_ENV = {
   codex: "AGENT_HANDOFF_CODEX_SPEED",
   cursor: "AGENT_HANDOFF_CURSOR_SPEED"
 };
+var FALLBACK_MODEL_ENV = {
+  claude: "AGENT_HANDOFF_CLAUDE_FALLBACK_MODEL",
+  codex: "AGENT_HANDOFF_CODEX_FALLBACK_MODEL",
+  cursor: "AGENT_HANDOFF_CURSOR_FALLBACK_MODEL"
+};
 function agentDefaultsPath() {
   return join13(resolveStateDir(), "agent-defaults.json");
 }
@@ -2039,6 +2149,8 @@ function getStoredAgentDefaults(agent) {
     out.effort = entry.effort;
   if (entry.speed)
     out.speed = entry.speed;
+  if (agent === "claude" && entry.fallbackModel)
+    out.fallbackModel = entry.fallbackModel;
   return out;
 }
 function resolveAgentDefaults(agent, env = process.env) {
@@ -2046,14 +2158,17 @@ function resolveAgentDefaults(agent, env = process.env) {
   const modelEnv = cleanValue(env[MODEL_ENV[agent]]);
   const effortEnv = agent === "cursor" ? null : cleanValue(env[EFFORT_ENV[agent]]);
   const speedEnv = agent === "cursor" ? null : normalizeSpeedValue(cleanValue(env[SPEED_ENV[agent]]));
+  const fallbackModelEnv = agent === "claude" ? cleanValue(env[FALLBACK_MODEL_ENV[agent]]) : null;
   const legacyCodexEffortEnv = agent === "codex" ? cleanValue(env.AGENT_HANDOFF_CODEX_EFFORT) : null;
   const model = modelEnv ?? stored.model;
   const effort = effortEnv ?? legacyCodexEffortEnv ?? stored.effort;
   const speed = speedEnv ?? stored.speed;
+  const fallbackModel = fallbackModelEnv ?? stored.fallbackModel;
   const out = {
     modelSource: modelEnv ? "env" : stored.model ? "state" : "unset",
     effortSource: effortEnv || legacyCodexEffortEnv ? "env" : stored.effort ? "state" : "unset",
-    speedSource: speedEnv ? "env" : stored.speed ? "state" : "unset"
+    speedSource: speedEnv ? "env" : stored.speed ? "state" : "unset",
+    fallbackModelSource: fallbackModelEnv ? "env" : stored.fallbackModel ? "state" : "unset"
   };
   if (model)
     out.model = model;
@@ -2061,6 +2176,8 @@ function resolveAgentDefaults(agent, env = process.env) {
     out.effort = effort;
   if (speed)
     out.speed = speed;
+  if (fallbackModel)
+    out.fallbackModel = fallbackModel;
   return out;
 }
 function setAgentDefaults(agent, patch) {
@@ -2069,6 +2186,9 @@ function setAgentDefaults(agent, patch) {
   }
   if (agent === "cursor" && patch.speed !== undefined) {
     throw new Error("Cursor Agent encodes speed in the model id; set only model.");
+  }
+  if (agent !== "claude" && patch.fallbackModel !== undefined) {
+    throw new Error("Fallback model chains are currently supported only for Claude.");
   }
   ensureStateDir();
   const file = readAgentDefaultsFile();
@@ -2082,6 +2202,9 @@ function setAgentDefaults(agent, patch) {
     const speed = normalizeSpeedValue(normalizeValue("speed", patch.speed));
     if (speed)
       next.speed = speed;
+  }
+  if (patch.fallbackModel !== undefined) {
+    next.fallbackModel = normalizeFallbackModel(patch.fallbackModel);
   }
   next.updated_at = new Date().toISOString();
   const updated = {
@@ -2102,9 +2225,11 @@ function unsetAgentDefaults(agent, fields) {
     delete next.effort;
   if (fields.speed)
     delete next.speed;
+  if ("fallbackModel" in fields && fields.fallbackModel)
+    delete next.fallbackModel;
   next.updated_at = new Date().toISOString();
   const updatedAgents = { ...file.agents };
-  if (!next.model && !next.effort && !next.speed) {
+  if (!next.model && !next.effort && !next.speed && !next.fallbackModel) {
     delete updatedAgents[agent];
   } else {
     updatedAgents[agent] = next;
@@ -2118,9 +2243,27 @@ function unsetAgentDefaults(agent, fields) {
 }
 function envNamesForAgent(agent) {
   if (agent === "cursor") {
-    return { model: MODEL_ENV[agent], effort: "unsupported", speed: "unsupported" };
+    return {
+      model: MODEL_ENV[agent],
+      effort: "unsupported",
+      speed: "unsupported",
+      fallbackModel: "unsupported"
+    };
   }
-  return { model: MODEL_ENV[agent], effort: EFFORT_ENV[agent], speed: SPEED_ENV[agent] };
+  if (agent === "claude") {
+    return {
+      model: MODEL_ENV[agent],
+      effort: EFFORT_ENV[agent],
+      speed: SPEED_ENV[agent],
+      fallbackModel: FALLBACK_MODEL_ENV[agent]
+    };
+  }
+  return {
+    model: MODEL_ENV[agent],
+    effort: EFFORT_ENV[agent],
+    speed: SPEED_ENV[agent],
+    fallbackModel: "unsupported"
+  };
 }
 function cleanValue(value) {
   if (value === undefined)
@@ -2146,6 +2289,12 @@ function normalizeSpeedValue(value) {
     return "default";
   throw new Error(`Unsupported speed "${value}". Supported: fast, default.`);
 }
+function normalizeFallbackModel(value) {
+  const normalized = normalizeValue("fallback model", value).split(",").map((part) => part.trim()).filter(Boolean).join(",");
+  if (!normalized)
+    throw new Error("fallback model must include at least one model");
+  return normalized;
+}
 function isDefaultsFile(value) {
   if (!value || typeof value !== "object")
     return false;
@@ -2170,6 +2319,8 @@ function isDefaultsFile(value) {
       if (!isPersistedSpeedDefault(d.speed))
         return false;
     }
+    if (d.fallbackModel !== undefined && typeof d.fallbackModel !== "string")
+      return false;
     if (d.updated_at !== undefined && typeof d.updated_at !== "string")
       return false;
   }
@@ -2188,7 +2339,7 @@ function pickCursorSupportedDefaults(defaults) {
 }
 
 // lib/ui-server.ts
-import { spawnSync as spawnSync3 } from "node:child_process";
+import { spawnSync as spawnSync4 } from "node:child_process";
 import { existsSync as existsSync12, readFileSync as readFileSync8 } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join as join14, resolve as resolve3 } from "node:path";
@@ -2249,7 +2400,7 @@ async function startUiServer(options) {
     console.error("[handoff] transcripts: disabled");
   }
   if (options.open) {
-    spawnSync3(process.platform === "darwin" ? "open" : "xdg-open", [url], {
+    spawnSync4(process.platform === "darwin" ? "open" : "xdg-open", [url], {
       stdio: "ignore"
     });
   }
@@ -2506,7 +2657,7 @@ function readTraces2(ws, topic) {
 import { readFileSync as readFileSync10 } from "node:fs";
 
 // lib/agents/cursor-sqlite.ts
-import { spawnSync as spawnSync4 } from "node:child_process";
+import { spawnSync as spawnSync5 } from "node:child_process";
 import { existsSync as existsSync15 } from "node:fs";
 function readCursorChat2(dbPath, options = {}) {
   const warnings = [];
@@ -2542,14 +2693,14 @@ function readCursorChat2(dbPath, options = {}) {
   return { meta, rootBlobId, turns, warnings };
 }
 function sqlite3Available2() {
-  const r = spawnSync4("sqlite3", ["-version"], { stdio: ["ignore", "pipe", "pipe"] });
+  const r = spawnSync5("sqlite3", ["-version"], { stdio: ["ignore", "pipe", "pipe"] });
   return r.status === 0;
 }
 function validateRootBlobShape2(hex) {
   return /^0a20[0-9a-f]{64}/i.test(hex);
 }
 function runSqlite2(dbPath, sql) {
-  const r = spawnSync4("sqlite3", [dbPath, sql], {
+  const r = spawnSync5("sqlite3", [dbPath, sql], {
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -3655,7 +3806,16 @@ async function cmdSend(argv) {
   }
   const wantResume = shouldResumeAgentSession(mode, boolFlag(args, "resume"));
   const sessionId = wantResume ? snapshot?.sessions[agent.name] ?? null : null;
-  const agentDefaults = resolveAgentDefaults(agent.name);
+  let agentDefaults = resolveAgentDefaults(agent.name);
+  if (agent.name === "claude") {
+    const resolvedClaudeDefaults = resolveClaudeInvocationDefaults(agentDefaults, {
+      versionText: readClaudeCodeVersionText()
+    });
+    agentDefaults = resolvedClaudeDefaults.defaults;
+    for (const note of resolvedClaudeDefaults.notes) {
+      console.error(`[handoff] claude defaults: ${note}`);
+    }
+  }
   const noPlan = boolFlag(args, "no-plan");
   const callerAgent = detectCallerAgent();
   const composed = noPlan ? { prompt, injection: null } : composePromptWithPlan(workspace, topicSlug, prompt);
@@ -4167,12 +4327,15 @@ function cmdDoctor(argv) {
   console.log("");
   console.log("model defaults");
   printModelDefaults();
+  console.log("");
+  console.log("claude capabilities");
+  printClaudeCapabilities();
   return 0;
 }
 function cmdModel(argv) {
   const args = parseFlags(argv, {
-    string: ["model", "effort", "speed"],
-    boolean: ["path", "model-only", "effort-only", "speed-only"],
+    string: ["model", "effort", "speed", "fallback-model"],
+    boolean: ["path", "model-only", "effort-only", "speed-only", "fallback-only"],
     _: "action"
   });
   if (boolFlag(args, "path")) {
@@ -4193,6 +4356,7 @@ function cmdModel(argv) {
     const positionalModel = args.positional[2];
     const model = strFlag(args, "model") ?? positionalModel;
     const effort = strFlag(args, "effort");
+    const fallbackModel = strFlag(args, "fallback-model");
     let speed;
     try {
       speed = normalizeSpeed(strFlag(args, "speed"));
@@ -4200,9 +4364,9 @@ function cmdModel(argv) {
       console.error(err instanceof Error ? err.message : String(err));
       return 2;
     }
-    if (!model && !effort && !speed) {
-      console.error("Usage: handoff model set <agent> <model> [--effort <level>] [--speed fast|default]");
-      console.error("       handoff model set <agent> --model <model> [--effort <level>] [--speed fast|default]");
+    if (!model && !effort && !speed && !fallbackModel) {
+      console.error("Usage: handoff model set <agent> <model> [--effort <level>] [--speed fast|default] [--fallback-model <models>]");
+      console.error("       handoff model set <agent> --model <model> [--effort <level>] [--speed fast|default] [--fallback-model <models>]");
       return 2;
     }
     if (effort && agent === "cursor") {
@@ -4213,6 +4377,10 @@ function cmdModel(argv) {
       console.error("Cursor Agent encodes speed in the model id; set --model composer-2.5-fast instead.");
       return 2;
     }
+    if (fallbackModel && agent !== "claude") {
+      console.error("Fallback model chains are currently supported only for Claude.");
+      return 2;
+    }
     const patch = {};
     if (model)
       patch.model = model;
@@ -4220,6 +4388,8 @@ function cmdModel(argv) {
       patch.effort = effort;
     if (speed)
       patch.speed = speed;
+    if (fallbackModel)
+      patch.fallbackModel = fallbackModel;
     try {
       setAgentDefaults(agent, patch);
     } catch (err) {
@@ -4238,7 +4408,8 @@ function cmdModel(argv) {
     const unsetModel = boolFlag(args, "model-only");
     const unsetEffort = boolFlag(args, "effort-only");
     const unsetSpeed = boolFlag(args, "speed-only");
-    const fields = unsetModel || unsetEffort || unsetSpeed ? { model: unsetModel, effort: unsetEffort, speed: unsetSpeed } : { model: true, effort: true, speed: true };
+    const unsetFallback = boolFlag(args, "fallback-only");
+    const fields = unsetModel || unsetEffort || unsetSpeed || unsetFallback ? { model: unsetModel, effort: unsetEffort, speed: unsetSpeed, fallbackModel: unsetFallback } : { model: true, effort: true, speed: true, fallbackModel: true };
     unsetAgentDefaults(agent, fields);
     console.log(formatModelLine(agent, resolveAgentDefaults(agent)));
     console.log(`path: ${agentDefaultsPath()}`);
@@ -4247,8 +4418,8 @@ function cmdModel(argv) {
   console.error(`Usage:
 ` + `  handoff model                         list defaults
 ` + `  handoff model --path                  print backing JSON path
-` + `  handoff model set <agent> <model> [--effort <level>] [--speed fast|default]
-` + "  handoff model unset <agent> [--model-only|--effort-only|--speed-only]");
+` + `  handoff model set <agent> <model> [--effort <level>] [--speed fast|default] [--fallback-model <models>]
+` + "  handoff model unset <agent> [--model-only|--effort-only|--speed-only|--fallback-only]");
   return 2;
 }
 function normalizeSpeed(raw) {
@@ -4272,19 +4443,35 @@ function printModelDefaults() {
     console.log(formatModelLine(agent, resolveAgentDefaults(agent)));
   }
 }
+function printClaudeCapabilities() {
+  const versionText = readClaudeCodeVersionText();
+  const version = parseClaudeCodeVersion(versionText);
+  const text = versionText ?? "(unavailable)";
+  const fable = supportsClaudeFable(version) ? "yes" : "no";
+  console.log(`  version=${text} fable=${fable} min_fable=2.1.170`);
+  const resolved = resolveClaudeInvocationDefaults(resolveAgentDefaults("claude"), { versionText });
+  if (resolved.notes.length > 0) {
+    for (const note of resolved.notes)
+      console.log(`  note=${note}`);
+  }
+  const fallback = resolved.defaults.fallbackModel ? `fallback=${resolved.defaults.fallbackModel}(${resolved.defaults.fallbackModelSource})` : "fallback=(none)";
+  console.log(`  resolved model=${resolved.defaults.model ?? "(default)"}(${resolved.defaults.modelSource})` + ` effort=${resolved.defaults.effort ?? "(default)"}(${resolved.defaults.effortSource})` + ` speed=${resolved.defaults.speed ?? "(default)"}(${resolved.defaults.speedSource})` + ` ${fallback}`);
+}
 function formatModelLine(agent, resolved) {
   const stored = getStoredAgentDefaults(agent);
   const envNames = envNamesForAgent(agent);
   const modelText = resolved.model ? `${resolved.model} (${resolved.modelSource})` : agent === "cursor" ? `${CURSOR_BUILTIN_MODEL_DEFAULT2} (built-in)` : "(agent CLI default)";
   const effortText = resolved.effort ? `${resolved.effort} (${resolved.effortSource})` : agent === "cursor" ? "(unsupported)" : "(agent CLI default)";
   const speedText = agent === "cursor" ? "(model id)" : resolved.speed ? `${resolved.speed} (${resolved.speedSource})` : "(agent CLI default)";
-  const storedText = stored.model || stored.effort || stored.speed ? ` stored=${[
+  const fallbackText = agent === "claude" ? resolved.fallbackModel ? ` fallback=${resolved.fallbackModel} (${resolved.fallbackModelSource})` : " fallback=(none)" : "";
+  const storedText = stored.model || stored.effort || stored.speed || stored.fallbackModel ? ` stored=${[
     stored.model ? `model:${stored.model}` : null,
     stored.effort ? `effort:${stored.effort}` : null,
-    stored.speed ? `speed:${stored.speed}` : null
+    stored.speed ? `speed:${stored.speed}` : null,
+    stored.fallbackModel ? `fallback:${stored.fallbackModel}` : null
   ].filter(Boolean).join(",")}` : "";
-  const envText = agent === "cursor" ? envNames.model : `${envNames.model}, ${envNames.effort}, ${envNames.speed}`;
-  return `  ${agent.padEnd(8)} model=${modelText.padEnd(32)} effort=${effortText}` + ` speed=${speedText}` + ` env=[${envText}]` + storedText;
+  const envText = agent === "cursor" ? envNames.model : agent === "claude" ? `${envNames.model}, ${envNames.effort}, ${envNames.speed}, ${envNames.fallbackModel}` : `${envNames.model}, ${envNames.effort}, ${envNames.speed}`;
+  return `  ${agent.padEnd(8)} model=${modelText.padEnd(32)} effort=${effortText}` + ` speed=${speedText}` + fallbackText + ` env=[${envText}]` + storedText;
 }
 function cmdAlias(argv) {
   const args = parseFlags(argv, {
@@ -5039,7 +5226,7 @@ async function cmdPlan(argv) {
     const tmp2 = `/tmp/handoff-plan-${topic}-${r2}.md`;
     writeFileSync7(tmp1, a, "utf-8");
     writeFileSync7(tmp2, b, "utf-8");
-    spawnSync5("git", ["--no-pager", "diff", "--no-index", "--", tmp1, tmp2], {
+    spawnSync6("git", ["--no-pager", "diff", "--no-index", "--", tmp1, tmp2], {
       stdio: "inherit"
     });
     return 0;
@@ -5077,7 +5264,7 @@ function cmdPlanEdit(workspace, topic) {
     writePlan(workspace, topic, "");
   }
   const editor = process.env.EDITOR ?? process.env.VISUAL ?? "vi";
-  const result = spawnSync5(editor, [path], { stdio: "inherit" });
+  const result = spawnSync6(editor, [path], { stdio: "inherit" });
   if (result.status !== 0) {
     console.error(`[handoff] editor exited with code ${result.status}`);
     return result.status ?? 1;
@@ -5176,6 +5363,9 @@ function formatDefaultsFooter(agent, defaults) {
   if (defaults.speed && agent !== "cursor") {
     parts.push(`speed=${defaults.speed}(${defaults.speedSource})`);
   }
+  if (defaults.fallbackModel && agent === "claude") {
+    parts.push(`fallback=${defaults.fallbackModel}(${defaults.fallbackModelSource})`);
+  }
   return parts.length > 0 ? ` ${parts.join(" ")}` : "";
 }
 function strFlag(p, key) {
@@ -5243,13 +5433,13 @@ function closest(target, candidates) {
   return best?.name ?? null;
 }
 function whichVersion(bin) {
-  const which = spawnSync5("which", [bin], { encoding: "utf-8" });
+  const which = spawnSync6("which", [bin], { encoding: "utf-8" });
   if (which.status !== 0)
     return null;
   const path = which.stdout.trim();
   if (!path)
     return null;
-  const ver = spawnSync5(bin, ["--version"], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+  const ver = spawnSync6(bin, ["--version"], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
   const version = (ver.stdout || ver.stderr).split(`
 `)[0]?.trim() ?? "";
   return { path, version: version || "(no --version output)" };
@@ -5290,7 +5480,7 @@ Usage:
   handoff archive <topic> [--workspace <path>]
   handoff reset-session <topic> --agent <name> [--reason ...]
   handoff prune [--keep-count N] [--keep-days N] [--workspace <path>]
-  handoff model [set <agent> <model> [--effort <level>] [--speed fast|default] | unset <agent> | --path]
+  handoff model [set <agent> <model> [--effort <level>] [--speed fast|default] [--fallback-model <models>] | unset <agent> | --path]
   handoff alias <resolved-path> <hash> | --list | --remove <path> | --suggest
   handoff doctor [--workspace <path>]
   handoff ui [--workspace <path>] [--all-workspaces]

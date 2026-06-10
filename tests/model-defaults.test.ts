@@ -15,6 +15,7 @@ let originalStateDir: string | undefined;
 let originalCodexModel: string | undefined;
 let originalCodexEffort: string | undefined;
 let originalCodexSpeed: string | undefined;
+let originalClaudeFallback: string | undefined;
 
 describe('agent model defaults', () => {
   beforeEach(() => {
@@ -23,10 +24,12 @@ describe('agent model defaults', () => {
     originalCodexModel = process.env.AGENT_HANDOFF_CODEX_MODEL;
     originalCodexEffort = process.env.AGENT_HANDOFF_CODEX_REASONING_EFFORT;
     originalCodexSpeed = process.env.AGENT_HANDOFF_CODEX_SPEED;
+    originalClaudeFallback = process.env.AGENT_HANDOFF_CLAUDE_FALLBACK_MODEL;
     process.env.AGENT_HANDOFF_STATE_DIR = stateRoot;
     delete process.env.AGENT_HANDOFF_CODEX_MODEL;
     delete process.env.AGENT_HANDOFF_CODEX_REASONING_EFFORT;
     delete process.env.AGENT_HANDOFF_CODEX_SPEED;
+    delete process.env.AGENT_HANDOFF_CLAUDE_FALLBACK_MODEL;
   });
 
   afterEach(() => {
@@ -38,6 +41,8 @@ describe('agent model defaults', () => {
     else process.env.AGENT_HANDOFF_CODEX_REASONING_EFFORT = originalCodexEffort;
     if (originalCodexSpeed === undefined) delete process.env.AGENT_HANDOFF_CODEX_SPEED;
     else process.env.AGENT_HANDOFF_CODEX_SPEED = originalCodexSpeed;
+    if (originalClaudeFallback === undefined) delete process.env.AGENT_HANDOFF_CLAUDE_FALLBACK_MODEL;
+    else process.env.AGENT_HANDOFF_CLAUDE_FALLBACK_MODEL = originalClaudeFallback;
     rmSync(stateRoot, { recursive: true, force: true });
   });
 
@@ -46,6 +51,7 @@ describe('agent model defaults', () => {
       modelSource: 'unset',
       effortSource: 'unset',
       speedSource: 'unset',
+      fallbackModelSource: 'unset',
     });
     expect(existsSync(agentDefaultsPath())).toBe(false);
   });
@@ -60,6 +66,7 @@ describe('agent model defaults', () => {
       modelSource: 'state',
       effortSource: 'state',
       speedSource: 'state',
+      fallbackModelSource: 'unset',
     });
   });
 
@@ -75,6 +82,7 @@ describe('agent model defaults', () => {
       modelSource: 'env',
       effortSource: 'env',
       speedSource: 'env',
+      fallbackModelSource: 'unset',
     });
   });
 
@@ -91,6 +99,7 @@ describe('agent model defaults', () => {
       modelSource: 'env',
       effortSource: 'unset',
       speedSource: 'unset',
+      fallbackModelSource: 'unset',
     });
   });
 
@@ -116,6 +125,7 @@ describe('agent model defaults', () => {
       modelSource: 'state',
       effortSource: 'unset',
       speedSource: 'unset',
+      fallbackModelSource: 'unset',
     });
   });
 
@@ -125,12 +135,44 @@ describe('agent model defaults', () => {
   });
 
   it('unsets selected fields without touching the other field', () => {
-    setAgentDefaults('claude', { model: 'sonnet', effort: 'high', speed: 'fast' });
+    setAgentDefaults('claude', {
+      model: 'sonnet',
+      effort: 'high',
+      speed: 'fast',
+      fallbackModel: 'opus,sonnet',
+    });
     unsetAgentDefaults('claude', { effort: true });
-    expect(getStoredAgentDefaults('claude')).toEqual({ model: 'sonnet', speed: 'fast' });
+    expect(getStoredAgentDefaults('claude')).toEqual({
+      model: 'sonnet',
+      speed: 'fast',
+      fallbackModel: 'opus,sonnet',
+    });
     unsetAgentDefaults('claude', { speed: true });
+    expect(getStoredAgentDefaults('claude')).toEqual({
+      model: 'sonnet',
+      fallbackModel: 'opus,sonnet',
+    });
+    unsetAgentDefaults('claude', { fallbackModel: true });
     expect(getStoredAgentDefaults('claude')).toEqual({ model: 'sonnet' });
     unsetAgentDefaults('claude', { model: true });
     expect(getStoredAgentDefaults('claude')).toEqual({});
+  });
+
+  it('lets Claude fallback env override stored fallback defaults', () => {
+    setAgentDefaults('claude', { model: 'latest-claude', fallbackModel: 'opus,sonnet' });
+    process.env.AGENT_HANDOFF_CLAUDE_FALLBACK_MODEL = 'sonnet,haiku';
+    expect(resolveAgentDefaults('claude')).toEqual({
+      model: 'latest-claude',
+      fallbackModel: 'sonnet,haiku',
+      modelSource: 'state',
+      effortSource: 'unset',
+      speedSource: 'unset',
+      fallbackModelSource: 'env',
+    });
+  });
+
+  it('rejects fallback model chains for non-Claude agents at the storage boundary', () => {
+    expect(() => setAgentDefaults('codex', { fallbackModel: 'gpt-5' })).toThrow('only for Claude');
+    expect(() => setAgentDefaults('cursor', { fallbackModel: 'gpt-5' })).toThrow('only for Claude');
   });
 });

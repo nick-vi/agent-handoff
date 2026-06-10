@@ -100,7 +100,8 @@ handoff send --agent codex --mode review --topic foo \
 handoff model                                      # list effective defaults
 # Example pins; update as provider model names change.
 handoff model set codex gpt-5.5 --effort xhigh --speed fast
-handoff model set claude opus --effort max --speed fast
+handoff model set claude latest-claude --effort max --fallback-model opus,sonnet
+handoff model set claude fast-opus --effort max    # Opus + Claude fast mode
 handoff model set cursor composer-2.5-fast         # Cursor model
 handoff model unset codex --speed-only             # remove one setting
 

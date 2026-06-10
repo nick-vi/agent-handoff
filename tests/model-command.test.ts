@@ -81,4 +81,22 @@ describe('handoff model command', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('speed=default (state)');
   });
+
+  it('sets and unsets a Claude fallback model chain', () => {
+    const set = run('model', 'set', 'claude', 'latest-claude', '--fallback-model', 'opus,sonnet');
+    expect(set.code).toBe(0);
+    expect(set.stdout).toContain('model=latest-claude (state)');
+    expect(set.stdout).toContain('fallback=opus,sonnet (state)');
+
+    const unset = run('model', 'unset', 'claude', '--fallback-only');
+    expect(unset.code).toBe(0);
+    expect(unset.stdout).toContain('model=latest-claude (state)');
+    expect(unset.stdout).toContain('fallback=(none)');
+  });
+
+  it('rejects fallback chains for non-Claude agents', () => {
+    const result = run('model', 'set', 'codex', 'gpt-5.5', '--fallback-model', 'gpt-5');
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('supported only for Claude');
+  });
 });
